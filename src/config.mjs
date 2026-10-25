@@ -16,9 +16,10 @@ export function readPrivateJson(path) {
   finally { if (fd !== undefined) closeSync(fd); }
 }
 
-export function readConfig(env = process.env) {
-  if (!env.PSST_CONFIG_FILE && !env.PSST_CONFIG) return null;
-  const path = resolve(env.PSST_CONFIG_FILE || env.PSST_CONFIG);
+export function readConfig(env = process.env, explicitPath) {
+  const selected = explicitPath || env.PSST_CONFIG_FILE || env.PSST_CONFIG;
+  if (!selected) return null;
+  const path = resolve(selected);
   const raw = readPrivateJson(path);
   if (raw.format !== 'broker-client-bundle-v1' || !Array.isArray(raw.allowed_client_types) || !raw.allowed_client_types.includes('pi')
       || raw.protocol_version !== '1' || raw.file_paths_relative_to !== 'connection_file_directory'

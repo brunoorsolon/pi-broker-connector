@@ -34,3 +34,30 @@ test('two Pi sessions real broker A→B→A; read ACK advances FIFO; resume keep
   t.after(()=>resumed.close()); await resumed.start(); assert.equal(resumed.inbox.identity.client_id,old);
   assert.match((await createCooperativeInbox({inbox:resumed.inbox}).broker_receive()).message,/pong/);
 });
+
+test('native connect command reconnects same live broker session; failed startup is explicit and retryable', async t => {
+  const { installExtension } = await import('../src/extension.mjs');
+  const { LocalError } = await import('../vendor/broker/reference/errors.mjs');
+  const f = await httpFixture(t);
+  const tokenFile = join(f.dir,'command-token'); writeFileSync(tokenFile,f.a.token,{mode:0o600});
+  const config={url:f.base,tokenFile,stateDirectory:join(f.dir,'command-state'),name:'Pi command'};
+  const commands={},events={},tools={},statuses=[];let saved=null,fail=false;
+  const ctx={hasUI:true,sessionManager:{getSessionId:()=> 'current-native-session'},ui:{notify(){},setStatus:(_key,value)=>statuses.push(value)}};
+  const Type={Object:()=>({}),String:()=>({}),Optional:()=>({}),Integer:()=>({})};
+  installExtension({on:(n,fn)=>events[n]=fn,registerCommand:(n,c)=>commands[n]=c,registerTool:t=>tools[t.name]=t},Type,{
+    env:{},pathStore:{read:()=>saved,write:value=>saved=value},configReader:(_env,path)=>path?config:null,
+    createSession:options=>{if(fail)throw new LocalError('invalid_configuration');return new PiBrokerSession({...options,clientOptions:{insecureDevelopment:true,now:()=>f.now,maxAttempts:1}});},
+  });
+  t.after(()=>events.session_shutdown());
+  const call=name=>tools[name].execute('test',{},undefined,undefined,ctx);
+  await events.session_start({},ctx);
+  await commands['psst-connect'].handler('/private/connection.json',ctx);
+  const first=(await call('broker_identity')).details.client_id; assert.ok(first);
+  await commands['psst-connect'].handler('/private/connection.json',ctx);
+  assert.equal((await call('broker_identity')).details.client_id,first);
+  assert.equal((await call('broker_list_clients')).details.clients.length,1);
+  fail=true;await commands['psst-connect'].handler('/private/connection.json',ctx);
+  assert.match(statuses.at(-1),/invalid_configuration/);assert.equal((await call('broker_identity')).isError,true);
+  fail=false;await events.session_start({},ctx);
+  assert.equal((await call('broker_identity')).details.client_id,first);assert.equal(saved,'/private/connection.json');
+});

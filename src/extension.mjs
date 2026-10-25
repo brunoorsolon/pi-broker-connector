@@ -1,24 +1,31 @@
+import { createConfigPathStore, validateConfigPath } from './config-path.mjs';
 import { readConfig } from './config.mjs';
 import { PiBrokerSession } from './session.mjs';
 import { createCooperativeInbox } from './cooperative-inbox.mjs';
 import { createTools, invokeTool } from '../vendor/broker/reference/tools.mjs';
 import { LocalError, safeError } from '../vendor/broker/reference/errors.mjs';
 
-export function installExtension(pi, Type, { configReader = readConfig, createSession = options => new PiBrokerSession(options) } = {}) {
+export function installExtension(pi, Type, { configReader = readConfig, pathStore = createConfigPathStore(), env = process.env, createSession = options => new PiBrokerSession(options) } = {}) {
   let owner = null, facade = null, ready = false, status = 'not_configured';
-  let generation = 0;
+  let generation = 0, operations = Promise.resolve();
+  const schedule = operation => {
+    const epoch = ++generation;
+    ready = false;
+    const next = operations.then(() => operation(epoch));
+    operations = next.catch(() => {});
+    return next;
+  };
   const notify = (ctx, text, kind = 'info') => { if (ctx?.hasUI) ctx.ui.notify(text, kind); };
   const setStatus = ctx => { if (ctx?.hasUI) ctx.ui.setStatus('psst', `Psst: ${status}`); };
   const stop = async () => {
-    generation++;
     const prior = owner; owner = null; facade = null; ready = false;
     if (prior) await prior.close();
   };
-  pi.on('session_start', async (_event, ctx) => {
+  const connect = async (ctx, epoch, selectedConfig) => {
     await stop();
-    const epoch = generation;
+    if (epoch !== generation) return;
     try {
-      const config = configReader();
+      const config = selectedConfig || configReader(env, env.PSST_CONFIG_FILE || env.PSST_CONFIG || pathStore.read());
       if (!config) { status = 'not_configured'; setStatus(ctx); return; }
       const hostSessionId = ctx.sessionManager.getSessionId();
       const current = createSession({ config, hostSessionId,
@@ -39,12 +46,26 @@ export function installExtension(pi, Type, { configReader = readConfig, createSe
       if (prior) await prior.close();
       setStatus(ctx); notify(ctx, `Psst could not connect (${status}). Check the private bundle and use /reload to retry.`, 'warning');
     }
+  };
+  pi.on('session_start', async (_event, ctx) => schedule(epoch => connect(ctx, epoch)));
+  pi.on('session_shutdown', async () => schedule(async () => { await stop(); status = 'stopped'; }));
+  pi.registerCommand('psst-connect', {
+    description: 'Connect this Pi session using an absolute connection.json path; remember only the path',
+    handler: async (args, ctx) => {
+      try {
+        const path = validateConfigPath(args.trim());
+        const config = configReader(env, path);
+        pathStore.write(path);
+        await schedule(epoch => connect(ctx, epoch, config));
+        if (env.PSST_CONFIG_FILE || env.PSST_CONFIG) notify(ctx, 'An existing PSST_CONFIG_FILE/PSST_CONFIG environment setting still takes precedence after /reload.', 'warning');
+        notify(ctx, ready ? 'Psst connected. Configuration path saved; no restart needed.' : 'Psst path saved. Check /psst-status; /reload retries the connection.');
+      } catch (error) { notify(ctx, `Psst could not save configuration (${safeError(error).error?.code || 'invalid_configuration'}). Use /psst-connect /absolute/path/connection.json.`, 'warning'); }
+    },
   });
-  pi.on('session_shutdown', async () => { await stop(); status = 'stopped'; });
   pi.registerCommand('psst-status', {
     description: 'Show this Pi session’s Psst broker status and client ID',
     handler: async (_args, ctx) => {
-      notify(ctx, ready && owner ? `Psst ${status}; client ID ${owner.inbox.identity.client_id}; inbox ${owner.inbox.stats().pending_count} pending. Cooperative mode: ask the agent to check broker_receive.` : `Psst ${status}. Set PSST_CONFIG_FILE to the private connection.json bundle, then /reload.`);
+      notify(ctx, ready && owner ? `Psst ${status}; client ID ${owner.inbox.identity.client_id}; inbox ${owner.inbox.stats().pending_count} pending. Cooperative mode: ask the agent to check broker_receive.` : `Psst ${status}. Use /psst-connect /absolute/path/connection.json. No restart required.`);
     },
   });
   const empty = Type.Object({}, { additionalProperties: false });
