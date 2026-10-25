@@ -22,11 +22,16 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   const packed=spawnSync('npm',['pack','--ignore-scripts','--json','--pack-destination',root],{cwd:process.cwd(),env:process.env,encoding:'utf8',timeout:30000});
   assert.equal(packed.status,0,packed.stderr);
   const manifest=JSON.parse(packed.stdout)[0];
+  assert.equal(manifest.name, '@matuto-ai/pi-broker-connector');
+  const packageVersion = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).version;
+  assert.equal(manifest.version, packageVersion);
+  assert.equal(manifest.filename, `matuto-ai-pi-broker-connector-${packageVersion}.tgz`);
   assert.ok(!manifest.files.some(f=>f.path.startsWith('test/')||f.path.includes('node_modules')||f.path==='token'));
   const unpack=join(root,'unpack'); mkdirSync(unpack);
   const extracted=spawnSync('tar',['-xzf',join(root,manifest.filename),'-C',unpack],{encoding:'utf8'});
   assert.equal(extracted.status,0,extracted.stderr);
   const packageRoot=join(unpack,'package');
+  assert.equal(JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).name, '@matuto-ai/pi-broker-connector');
   const loaded=await loadExtensions([join(packageRoot,'extensions/psst.ts')],root);
   assert.deepEqual(loaded.errors,[]);
   assert.equal(loaded.extensions.length,1);

@@ -1,5 +1,5 @@
 {
-  "name": "@brunoorsolon/pi-broker-connector",
+  "name": "@matuto-ai/pi-broker-connector",
   "version": "0.1.0",
   "description": "Session-bound Psst broker messaging tools for Pi",
   "type": "module",
