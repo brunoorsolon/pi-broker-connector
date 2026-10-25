@@ -15,8 +15,8 @@ function fixture(t) {
  const ctx={hasUI:true,sessionManager:{getSessionId:()=>sessionId},ui:{setStatus(){},notify:text=>notices.push(text)}};
  const createSession=options=>{const session=new PiBrokerSession(options),close=session.close.bind(session);let started=false;
  session.start=async()=>{started=true;active++;peak=Math.max(peak,active);};session.close=async()=>{if(started){active--;started=false;}await close();};instances.push(session);return session;};
- const load=()=>{const events={},commands={},tools={};const Type={Object:()=>({}),String:()=>({}),Optional:()=>({}),Integer:()=>({})};
- installExtension({on:(n,f)=>events[n]=f,registerCommand:(n,c)=>commands[n]=c,registerTool:t=>tools[t.name]=t},Type,{pathStore,env,createSession});return {events,commands,tools};};
+ const load=(overrides={})=>{const events={},commands={},tools={};const Type={Object:()=>({}),String:()=>({}),Optional:()=>({}),Integer:()=>({})};
+ installExtension({on:(n,f)=>events[n]=f,registerCommand:(n,c)=>commands[n]=c,registerTool:t=>tools[t.name]=t},Type,{pathStore,env,createSession,...overrides});return {events,commands,tools};};
  return {home,file,pathStore,env,ctx,load,instances,notices,setSession:id=>sessionId=id,get active(){return active;},get peak(){return peak;}};
 }
 test('connect activates current session without env; TXT survives reload; reconnect has one owner',async t=>{
@@ -48,4 +48,10 @@ test('disconnect survives reload until explicit reconnect; manual mode survives 
  await host.commands['psst-connect'].handler(f.file,f.ctx);assert.equal(f.active,1);
  const result=await host.tools.broker_identity.execute('id',{},undefined,undefined,f.ctx);assert.equal(result.details.local_mode,'cooperative_pull');
  await host.events.session_shutdown();
+});
+
+test('pairing completion after shutdown cannot reconnect or replace remembered configuration',async t=>{
+ const f=fixture(t);let finish;const host=f.load({connectionResolver:()=>new Promise(resolve=>finish=resolve)});
+ await host.events.session_start({},f.ctx);const pending=host.commands['psst-connect'].handler(f.file,f.ctx);
+ await host.events.session_shutdown();finish(f.file);await pending;assert.equal(f.active,0);assert.equal(f.pathStore.read(),null);
 });

@@ -25,13 +25,13 @@ export class PiBrokerSession {
     this.config = config;
     const root = resolve(config.stateDirectory); privateDirectory(root);
     // Endpoint and native-session binding prevent state adoption across brokers/sessions.
-    const binding = createHash('sha256').update(JSON.stringify([config.url, hostSessionId])).digest('hex');
+    const binding = createHash('sha256').update(JSON.stringify(config.credentialId ? [config.url, hostSessionId, config.credentialId] : [config.url, hostSessionId])).digest('hex');
     this.directory = join(root, binding); privateDirectory(this.directory);
     const identityFile = join(this.directory, 'identity.json');
-    try { writeFileSync(identityFile, JSON.stringify({ hostSessionId, brokerUrl: config.url, identity: newSessionIdentity('pi') }), { mode: 0o600, flag: 'wx' }); }
+    try { writeFileSync(identityFile, JSON.stringify({ hostSessionId, brokerUrl: config.url, ...(config.credentialId ? {credentialId:config.credentialId} : {}), identity: newSessionIdentity('pi') }), { mode: 0o600, flag: 'wx' }); }
     catch (error) { if (error.code !== 'EEXIST') throw error; }
     const saved = readPrivateJson(identityFile);
-    if (saved.hostSessionId !== hostSessionId || saved.brokerUrl !== config.url || saved.identity?.client_type !== 'pi') throw new LocalError('session_mismatch');
+    if (saved.hostSessionId !== hostSessionId || saved.brokerUrl !== config.url || saved.identity?.client_type !== 'pi' || saved.credentialId !== config.credentialId) throw new LocalError('session_mismatch');
     this.inbox = new Inbox({ directory: this.directory, identity: saved.identity });
     try {
       this.client = new BrokerClient({ url: config.url, tokenFile: config.tokenFile, caFile: config.caFile, inbox: this.inbox, requestTimeoutMs: 40000, ...clientOptions });

@@ -1,4 +1,5 @@
-import { openSync, closeSync, fstatSync, readFileSync, realpathSync } from 'node:fs';
+import { readEnrollmentReceipt } from '../vendor/broker/reference/enrollment.mjs';
+import { openSync, closeSync, fstatSync, readFileSync, realpathSync, lstatSync } from 'node:fs';
 import { isAbsolute, dirname, resolve, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { constants } from 'node:fs';
@@ -29,9 +30,18 @@ export function readConfig(env = process.env, explicitPath) {
   let url;
   try { url = new URL(raw.broker_url); } catch { throw new LocalError('invalid_configuration'); }
   if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new LocalError('invalid_configuration');
+  let credentialId;
+  const enrollmentFile = resolve(dirname(path), 'enrollment.json');
+  let hasEnrollment = false;
+  try { lstatSync(enrollmentFile); hasEnrollment = true; } catch (error) { if (error.code !== 'ENOENT') throw new LocalError('invalid_configuration'); }
+  if (raw.enrollment_receipt_file !== undefined && raw.enrollment_receipt_file !== 'enrollment.json') throw new LocalError('invalid_configuration');
+  if (hasEnrollment || raw.enrollment_receipt_file === 'enrollment.json') {
+    try { credentialId = readEnrollmentReceipt({connectionFile:path,clientType:'pi'}).credentialId; }
+    catch (error) { throw new LocalError(error?.code === 'credential_expired' ? 'credential_expired' : 'invalid_configuration'); }
+  }
   const name = env.PSST_NAME || 'Pi';
   if (name.length > 128 || /[\x00-\x1f\x7f]/.test(name)) throw new LocalError('invalid_configuration');
-  return { url: url.href, tokenFile: resolve(dirname(path), raw.token_file),
+  return { url: url.href, ...(credentialId ? {credentialId} : {}), tokenFile: resolve(dirname(path), raw.token_file),
     ...(raw.ca_file ? { caFile: resolve(dirname(path), raw.ca_file) } : {}),
     stateDirectory: resolve(env.PSST_STATE_DIR || resolve(homedir(), '.local/state/psst/pi')), name };
 }

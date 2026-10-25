@@ -47,3 +47,22 @@ test('bundle protocol/auth/path policy mismatch is rejected; optional CA resolve
  }
  f.write({...f.bundle,ca_file:'ca.pem'});assert.equal(readConfig(f.env).caFile,join(f.root,'ca.pem'));
 });
+test('verified enrollment sidecar binds installation; re-pair isolates old native mailbox',async t=>{
+ const f=fixture(t);const {randomUUID,createHash,randomBytes}=await import('node:crypto');
+ const make=config=>new PiBrokerSession({config,hostSessionId:'same-native',currentSessionId:()=> 'same-native'});
+ const legacy=make(readConfig(f.env)),legacyId=legacy.inbox.identity.client_id;await legacy.close();
+ const sidecar=join(f.root,'enrollment.json');const token=randomBytes(32).toString('base64url');writeFileSync(join(f.root,'token'),token,{mode:0o600});f.write({...f.bundle,scope:'psst',enrollment_receipt_file:'enrollment.json'});
+ const receipt={format:'psst-enrollment-receipt-v1',broker_url:'https://broker.example',token_sha256:createHash('sha256').update(token).digest('hex'),credential_id:`enrolled-${randomUUID()}`,adapter_id:`installation-${randomUUID()}`,scopes:['psst'],expires_at:new Date(Date.now()+86400000).toISOString(),protocol_version:'1',client_type:'pi'};
+ writeFileSync(sidecar,JSON.stringify(receipt),{mode:0o600});
+ const config=readConfig(f.env);assert.equal(config.credentialId,receipt.credential_id);
+ const first=make(config),firstId=first.inbox.identity.client_id;assert.notEqual(firstId,legacyId);await first.close();
+ const reloaded=make(readConfig(f.env));assert.equal(reloaded.inbox.identity.client_id,firstId);await reloaded.close();
+ writeFileSync(sidecar,JSON.stringify({...receipt,credential_id:`enrolled-${randomUUID()}`}));
+ const pairedAgain=make(readConfig(f.env));assert.notEqual(pairedAgain.inbox.identity.client_id,firstId);await pairedAgain.close();
+ chmodSync(sidecar,0o644);assert.throws(()=>readConfig(f.env));chmodSync(sidecar,0o600);
+ for(const mutation of [{client_type:'opencode'},{broker_url:'https://other.example'},{token_sha256:'0'.repeat(64)}]) {writeFileSync(sidecar,JSON.stringify({...receipt,...mutation}));assert.throws(()=>readConfig(f.env));}
+ writeFileSync(sidecar,JSON.stringify({...receipt,expires_at:'2000-01-01T00:00:00Z'}));assert.throws(()=>readConfig(f.env),{code:'credential_expired'});
+ rmSync(sidecar);assert.throws(()=>readConfig(f.env),{code:'invalid_configuration'});
+ f.write({...f.bundle,enrollment_receipt_file:'../other'});assert.throws(()=>readConfig(f.env));
+ f.write();assert.equal(readConfig(f.env).credentialId,undefined);
+});
