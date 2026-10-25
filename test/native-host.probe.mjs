@@ -45,6 +45,51 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   const result=await ext.tools.get('broker_receive').definition.execute('fixture-tool',{},undefined,undefined,ctx);
   assert.equal(result.isError,true);assert.equal(result.details.error.code,'session_mismatch');
   for(const handler of ext.handlers.get('session_shutdown')) await handler({type:'session_shutdown'},ctx);
+  // Actual native runtime + official local faux model: no provider auth or network.
+  const { createAgentSession } = await import(pathToFileURL(join(base,'dist/core/sdk.js')).href);
+  const { ModelRuntime } = await import(pathToFileURL(join(base,'dist/core/model-runtime.js')).href);
+  const { DefaultResourceLoader } = await import(pathToFileURL(join(base,'dist/core/resource-loader.js')).href);
+  const { SessionManager } = await import(pathToFileURL(join(base,'dist/core/session-manager.js')).href);
+  const { fauxProvider, fauxAssistantMessage } = await import(pathToFileURL(join(host,'node_modules/@earendil-works/pi-ai/dist/providers/faux.js')).href);
+  const { NativeDelivery } = await import(pathToFileURL(join(packageRoot,'src/native-delivery.mjs')).href);
+  const { Inbox, newSessionIdentity } = await import(pathToFileURL(join(packageRoot,'vendor/broker/reference/inbox.mjs')).href);
+  const { randomUUID } = await import('node:crypto');
+  const runtime = await ModelRuntime.create({authPath:join(root,'fixture-auth.json'),modelsPath:null,refreshOnCreate:false});
+  const faux = fauxProvider({tokensPerSecond:100000});
+  let releaseBusy;
+  faux.setResponses([async()=>{await new Promise(resolve=>releaseBusy=resolve);return fauxAssistantMessage('initial turn');},fauxAssistantMessage('native reply A'),fauxAssistantMessage('native reply B')]);
+  runtime.registerNativeProvider(faux.provider);
+  let nativeApi, nativeCtx;
+  const loader = new DefaultResourceLoader({cwd:root,agentDir:join(root,'native-agent'),noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,
+    extensionFactories:[api=>{nativeApi=api;api.on('session_start',(_event,context)=>nativeCtx=context);} ]});
+  await loader.reload();
+  const manager = SessionManager.create(root,join(root,'native-sessions'));
+  const {session: nativeSession} = await createAgentSession({cwd:root,agentDir:join(root,'native-agent'),modelRuntime:runtime,model:faux.getModel(),resourceLoader:loader,sessionManager:manager,noTools:'all'});
+  await nativeSession.bindExtensions({});
+  const identity = newSessionIdentity('pi');
+  let inbox = new Inbox({directory:join(root,'native-inbox'),identity});
+  const sessionAdapter = {get inbox(){return inbox;},isAlive:()=>manager.getSessionId()===nativeCtx.sessionManager.getSessionId()};
+  let delivery = new NativeDelivery({session:sessionAdapter,pi:nativeApi,ctx:nativeCtx});
+  t.after(()=>{delivery.stop();inbox.close();nativeSession.dispose();});
+  const until = async predicate => {for(let n=0;n<300;n++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}throw Error('native fixture timed out');};
+  const started = nativeSession.prompt('fixture user input');
+  await until(()=>!!releaseBusy);
+  for(let sequence=1;sequence<=2;sequence++) inbox.accept({protocol_version:'1',message_id:randomUUID(),recipient_id:identity.client_id,recipient_sequence:sequence,
+    sender:{client_id:randomUUID(),client_type:'pi',name:'peer',model:{provider:null,id:null,source:'unknown'},project:null,metadata_revision:1},origin:'broker_agent',authority:'untrusted_agent_input',content:{type:'text/plain',text:`native payload ${sequence}`},accepted_at:new Date().toISOString(),expires_at:new Date(Date.now()+86400000).toISOString(),correlation_id:null,reply_to_message_id:null});
+  delivery.tick();assert.equal(inbox.head().state,'pending','busy native model must not be interrupted');
+  releaseBusy();await started;
+  delivery.tick();assert.equal(inbox.head().state,'injecting');
+  await until(()=>faux.state.callCount===2 && nativeSession.isIdle);
+  // Reopen between native persistence and local acceptance, as after an adapter crash.
+  delivery.stop();inbox.close();inbox=new Inbox({directory:join(root,'native-inbox'),identity});
+  delivery=new NativeDelivery({session:sessionAdapter,pi:nativeApi,ctx:nativeCtx});
+  delivery.tick();assert.equal(faux.state.callCount,2,'reconciliation must not repeat the model turn');assert.equal(inbox.head().envelope.content.text,'native payload 2');
+  delivery.tick();await until(()=>faux.state.callCount===3 && nativeSession.isIdle);delivery.tick();assert.equal(inbox.head(),null);
+  const transcript = readFileSync(manager.getSessionFile(),'utf8').trim().split('\n').map(line=>JSON.parse(line));
+  assert.equal(transcript.filter(row=>row.type==='custom_message'&&row.customType==='psst-agent-message').length,2);
+  assert.equal(inbox.db.prepare("SELECT count(*) AS n FROM inbox WHERE native_receipt LIKE 'pi:%'").get().n,2);
+  assert.equal(inbox.db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name='cooperative_receipts'").get().n,0,'automatic delivery never creates explicit-read receipts');
+
   // Native package installer, with isolated HOME/agent configuration only.
   const cli=join(base,'dist/cli.js');
   const installed=spawnSync(process.execPath,[cli,'install',packageRoot],{cwd:root,env:process.env,encoding:'utf8',timeout:30000});

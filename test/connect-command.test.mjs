@@ -39,3 +39,13 @@ test('TXT rejects multiline/relative/public/symlink; explicit env keeps preceden
  f.pathStore.write(f.file);chmodSync(pointer,0o644);assert.throws(()=>f.pathStore.read());rmSync(pointer);symlinkSync(f.file,pointer);assert.throws(()=>f.pathStore.read());
  f.env.PSST_CONFIG_FILE=f.file;const host=f.load();await host.events.session_start({},f.ctx);assert.equal(f.active,1);await host.events.session_shutdown();
 });
+
+test('disconnect survives reload until explicit reconnect; manual mode survives reconnect',async t=>{
+ const f=fixture(t);let host=f.load();await host.commands['psst-connect'].handler(f.file,f.ctx);
+ await host.commands['psst-mode'].handler('manual',f.ctx);
+ await host.commands['psst-disconnect'].handler('',f.ctx);assert.equal(f.active,0);
+ await host.events.session_shutdown();host=f.load();await host.events.session_start({},f.ctx);assert.equal(f.active,0);
+ await host.commands['psst-connect'].handler(f.file,f.ctx);assert.equal(f.active,1);
+ const result=await host.tools.broker_identity.execute('id',{},undefined,undefined,f.ctx);assert.equal(result.details.local_mode,'cooperative_pull');
+ await host.events.session_shutdown();
+});
