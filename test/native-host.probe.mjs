@@ -38,7 +38,9 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   const ext=loaded.extensions[0];
   assert.deepEqual([...ext.tools.keys()].sort(),['broker_acknowledge','broker_identity','broker_list_clients','broker_message_status','broker_receive','broker_send']);
   assert.ok(ext.commands.has('psst-status'));
+  assert.ok(ext.commands.has('psst-connect'));
   const ctx={hasUI:false,sessionManager:{getSessionId:()=> 'native-fixture'}};
+  await ext.commands.get('psst-connect').handler('/missing/connection.json', ctx);
   for(const handler of ext.handlers.get('session_start')) await handler({type:'session_start'},ctx);
   const result=await ext.tools.get('broker_receive').definition.execute('fixture-tool',{},undefined,undefined,ctx);
   assert.equal(result.isError,true);assert.equal(result.details.error.code,'session_mismatch');
