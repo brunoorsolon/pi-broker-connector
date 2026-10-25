@@ -67,6 +67,7 @@ export class NativeDelivery {
         this.diagnostic('native_handoff_unknown'); return;
       }
       if (this.mode !== 'auto' || this.disconnected) return;
+      if (this.session.deliveryAllowed?.() !== true) { this.diagnostic('native_delivery_paused'); return; }
       if (head.envelope.sender.client_id === this.inbox.identity.client_id) { this.diagnostic('self_message_requires_manual'); return; }
       // Leave busy/compacting sessions alone. The synchronous check + native call
       // happen in one JS turn; native Pi owns its own run/continuation scheduling.

@@ -68,7 +68,7 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   await nativeSession.bindExtensions({});
   const identity = newSessionIdentity('pi');
   let inbox = new Inbox({directory:join(root,'native-inbox'),identity});
-  const sessionAdapter = {get inbox(){return inbox;},isAlive:()=>manager.getSessionId()===nativeCtx.sessionManager.getSessionId()};
+  const sessionAdapter = {get inbox(){return inbox;},deliveryAllowed:()=>true,isAlive:()=>manager.getSessionId()===nativeCtx.sessionManager.getSessionId()};
   let delivery = new NativeDelivery({session:sessionAdapter,pi:nativeApi,ctx:nativeCtx});
   t.after(()=>{delivery.stop();inbox.close();nativeSession.dispose();});
   const until = async predicate => {for(let n=0;n<300;n++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}throw Error('native fixture timed out');};
