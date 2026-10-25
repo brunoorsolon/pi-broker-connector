@@ -1,5 +1,5 @@
 import { LocalError } from '../vendor/broker/reference/errors.mjs';
-import { homedir } from 'node:os';
+import { storageLayout } from './storage.mjs';
 import { resolve, join } from 'node:path';
 import { readPrivateJson } from './config.mjs';
 import { validateConfigPath } from './config-path.mjs';
@@ -12,7 +12,7 @@ export async function resolveConnectionFile(file, { env = process.env,
   validateConfigPath(file);
   const raw = readPrivateJson(file);
   if (raw.format !== 'psst-pairing-v1') return file;
-  const root = resolve(env.PSST_STATE_DIR || resolve(homedir(), '.local/state/psst/pi'));
+  const root = storageLayout(env).stateDirectory;
   try {
     const result = await pairingConnector({pairingFile:file,directory:join(root,'installations'),clientType:'pi'});
     return validateConfigPath(result.connectionFile);

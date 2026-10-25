@@ -1,7 +1,7 @@
 import { readEnrollmentReceipt } from '../vendor/broker/reference/enrollment.mjs';
 import { openSync, closeSync, fstatSync, readFileSync, realpathSync, lstatSync } from 'node:fs';
 import { isAbsolute, dirname, resolve, basename } from 'node:path';
-import { homedir } from 'node:os';
+import { storageLayout } from './storage.mjs';
 import { constants } from 'node:fs';
 import { LocalError } from '../vendor/broker/reference/errors.mjs';
 
@@ -39,9 +39,11 @@ export function readConfig(env = process.env, explicitPath) {
     try { credentialId = readEnrollmentReceipt({connectionFile:path,clientType:'pi'}).credentialId; }
     catch (error) { throw new LocalError(error?.code === 'credential_expired' ? 'credential_expired' : 'invalid_configuration'); }
   }
+  const configuredBroker=env.PSST_BROKER_URL;
+  if(configuredBroker){let expected;try{expected=new URL(configuredBroker);}catch{throw new LocalError('invalid_configuration');}if(expected.protocol!=='https:'||expected.username||expected.password||expected.search||expected.hash||expected.pathname!=='/'||expected.origin!==url.origin)throw new LocalError('broker_origin_mismatch');}
   const name = env.PSST_NAME || 'Pi';
   if (name.length > 128 || /[\x00-\x1f\x7f]/.test(name)) throw new LocalError('invalid_configuration');
   return { url: url.href, ...(credentialId ? {credentialId} : {}), tokenFile: resolve(dirname(path), raw.token_file),
     ...(raw.ca_file ? { caFile: resolve(dirname(path), raw.ca_file) } : {}),
-    stateDirectory: resolve(env.PSST_STATE_DIR || resolve(homedir(), '.local/state/psst/pi')), name };
+    ...storageLayout(env), name };
 }

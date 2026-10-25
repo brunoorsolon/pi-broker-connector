@@ -1,3 +1,4 @@
+import {nativeSetup} from './native-setup.mjs';
 import { resolveConnectionFile } from './connect-config.mjs';
 import { NativeDelivery } from './native-delivery.mjs';
 import { createConfigPathStore, validateConfigPath } from './config-path.mjs';
@@ -7,7 +8,7 @@ import { createCooperativeInbox } from './cooperative-inbox.mjs';
 import { createTools, invokeTool } from '../vendor/broker/reference/tools.mjs';
 import { LocalError, safeError } from '../vendor/broker/reference/errors.mjs';
 
-export function installExtension(pi, Type, { configReader = readConfig, pathStore = createConfigPathStore(), env = process.env, connectionResolver = resolveConnectionFile, createSession = options => new PiBrokerSession(options) } = {}) {
+export function installExtension(pi, Type, { configReader = readConfig, env = process.env, pathStore = createConfigPathStore(undefined, env), connectionResolver = resolveConnectionFile, createSession = options => new PiBrokerSession(options), setupConnector = options => import('../vendor/broker/reference/enrollment.mjs').then(m=>m.connectPairingSecret(options)), setupUI = nativeSetup } = {}) {
   let owner = null, facade = null, delivery = null, ready = false, status = 'not_configured';
   let generation = 0, operations = Promise.resolve();
   const schedule = operation => {
@@ -30,6 +31,8 @@ export function installExtension(pi, Type, { configReader = readConfig, pathStor
     try {
       const config = selectedConfig || configReader(env, env.PSST_CONFIG_FILE || env.PSST_CONFIG || pathStore.read());
       if (!config) { status = 'not_configured'; setStatus(ctx); return; }
+      if(!selectedConfig&&!env.PSST_CONFIG_FILE&&!env.PSST_CONFIG){const saved=pathStore.snapshot?.();if(saved?.brokerUrl&&new URL(config.url).origin!==saved.brokerUrl)throw new LocalError('broker_origin_mismatch');}
+      if (config.legacyStorage) notify(ctx, 'Psst is preserving existing legacy inbox storage. It has not been moved into Pi persistent storage; keep that directory until a coordinated offline migration.', 'warning');
       const hostSessionId = ctx.sessionManager.getSessionId();
       const current = createSession({ config, hostSessionId,
         currentSessionId: () => ctx.sessionManager.getSessionId(),
@@ -51,23 +54,45 @@ export function installExtension(pi, Type, { configReader = readConfig, pathStor
       delivery?.stop(); delivery = null;
       const prior = owner; owner = null; facade = null; ready = false;
       if (prior) await prior.close();
-      setStatus(ctx); notify(ctx, `Psst could not connect (${status}). Check the private bundle and use /reload to retry.`, 'warning');
+      setStatus(ctx); notify(ctx, `Psst could not connect (${status}). Use /psst-status and /reload to retry the saved credential; authorize replacement setup only when needed.`, 'warning');
     }
   };
   pi.on('session_start', async (_event, ctx) => schedule(epoch => connect(ctx, epoch)));
   pi.on('session_shutdown', async () => schedule(async () => { await stop(); status = 'stopped'; }));
+  pi.registerCommand('psst-setup', {
+    description: 'Configure broker URL and authorize this installation using native private input',
+    handler: async (args, ctx) => {
+      if(args.trim()){notify(ctx,'Use /psst-setup without arguments. Never put a secret in a command.','warning');return;}
+      try {
+        const initial=generation,nativeId=ctx.sessionManager.getSessionId(),revision=pathStore.snapshot?.().revision;
+        if(ready&&!await ctx.ui.confirm('Replace Psst installation credential?', 'This creates a new credential/mailbox partition. Existing pending messages remain in their old inbox. Continue only with an explicitly approved new pairing secret.'))return;
+        if(initial!==generation||ctx.sessionManager.getSessionId()!==nativeId)throw new LocalError('session_mismatch');
+        const selected=await setupUI(ctx,{env,pairingConnector:setupConnector,stillCurrent:()=>initial===generation&&ctx.sessionManager.getSessionId()===nativeId});
+        if(!selected)return;
+        const path=selected.connectionFile;
+        if(initial!==generation||ctx.sessionManager.getSessionId()!==nativeId)throw new LocalError('session_mismatch');
+        const config=configReader(env,path);
+        if(new URL(config.url).origin!==selected.brokerUrl)throw new LocalError('broker_origin_mismatch');
+        const task=schedule(epoch=>connect(ctx,epoch,config,true)),expected=generation;await task;
+        if(!ready||generation!==expected||ctx.sessionManager.getSessionId()!==nativeId)return;
+        const saved=pathStore.write(path,selected.brokerUrl,revision);
+        notify(ctx,saved===false?'Psst connected for this session. Another setup changed the saved selection; future-session selection was not overwritten.':'Psst installation connected. Future native sessions use the saved credential.');
+      } catch {notify(ctx,'Psst setup did not complete. No secret was displayed; keep local retry state and retry explicitly.','warning');}
+    },
+  });
   pi.registerCommand('psst-connect', {
     description: 'Connect this Pi session using an absolute connection.json path; remember only the path',
     handler: async (args, ctx) => {
       try {
-        const epochBeforePairing = generation, sessionBeforePairing = ctx.sessionManager.getSessionId();
+        const epochBeforePairing = generation, sessionBeforePairing = ctx.sessionManager.getSessionId(),revision=pathStore.snapshot?.().revision;
         const path = await connectionResolver(validateConfigPath(args.trim()), {env});
         if (epochBeforePairing !== generation || ctx.sessionManager.getSessionId() !== sessionBeforePairing) throw new LocalError('session_mismatch');
         const config = configReader(env, path);
-        pathStore.write(path);
-        await schedule(epoch => connect(ctx, epoch, config, true));
+        const task=schedule(epoch => connect(ctx, epoch, config, true)),expected=generation;await task;
+        if(!ready||generation!==expected||ctx.sessionManager.getSessionId()!==sessionBeforePairing)return;
+        const saved=pathStore.write(path,new URL(config.url).origin,revision);
         if (env.PSST_CONFIG_FILE || env.PSST_CONFIG) notify(ctx, 'An existing PSST_CONFIG_FILE/PSST_CONFIG environment setting still takes precedence after /reload.', 'warning');
-        notify(ctx, ready ? 'Psst connected. Configuration path saved; no restart needed.' : 'Psst path saved. Check /psst-status; /reload retries the connection.');
+        notify(ctx,saved===false?'Psst connected for this session. Another setup changed the saved selection; future-session selection was not overwritten.':'Psst connected. Selection saved; no restart needed.');
       } catch (error) { notify(ctx, `Psst could not save configuration (${safeError(error).error?.code || 'invalid_configuration'}). Use /psst-connect /absolute/path/connection.json.`, 'warning'); }
     },
   });
@@ -88,7 +113,7 @@ export function installExtension(pi, Type, { configReader = readConfig, pathStor
   pi.registerCommand('psst-status', {
     description: 'Show this Pi session’s Psst broker status and client ID',
     handler: async (_args, ctx) => {
-      notify(ctx, ready && owner ? `Psst ${status}; client ID ${owner.inbox.identity.client_id}; inbox ${owner.inbox.stats().pending_count} pending. Delivery mode: ${delivery?.mode}. Native acceptance is not model read or action success.` : `Psst ${status}. Use /psst-connect /absolute/path/connection.json. No restart required.`);
+      notify(ctx, ready && owner ? `Psst ${status}; client ID ${owner.inbox.identity.client_id}; inbox ${owner.inbox.stats().pending_count} pending. Delivery mode: ${delivery?.mode}. Native acceptance is not model read or action success.` : `Psst ${status}. Use /psst-setup for native first-time setup. No restart required.`);
     },
   });
   const empty = Type.Object({}, { additionalProperties: false });
