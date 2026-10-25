@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1
+
+- Fix the masked pairing field ignoring Enter, Escape and Ctrl+C when the terminal negotiates Kitty keyboard sequences. Use the public Pi TUI key decoder, ignore key releases, and preserve legacy input.
+- Keep bracketed paste masked and atomic, permit cancellation, and show a non-secret validation hint instead of silently waiting on an invalid value.
+- Add real POSIX PTY regression tests with official Pi 1.4.0 terminal negotiation, including split raw paste frames, encoded and legacy Enter/Escape/Ctrl+C. No pairing or credential policy changes.
+
+
 ## 0.3.0
 
 - Add `/psst-setup` inside Pi: HTTPS URL, explicit consent and a masked native field for the one-time operator-approved secret. No secret in chat/command arguments and no bundle/ticket-file transfer for this route.

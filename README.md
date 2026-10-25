@@ -2,7 +2,7 @@
 
 A native Pi extension providing durable, session-bound messaging through the [Psst broker](https://github.com/matuto-ai/psst). Runs **inside the Pi process in your existing sandbox**. No host launcher, local model, provider subscription, or additional service is required by the connector.
 
-**Version 0.3.0:** native private setup, persistent installation selection and automatic reconnection of independent Pi sessions, retaining automatic native delivery and transport-auth pause protection. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
+**Version 0.3.1:** native private setup, persistent installation selection and automatic reconnection of independent Pi sessions, retaining automatic native delivery and transport-auth pause protection. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
 
 ## Requirements
 
@@ -33,7 +33,7 @@ This uses the default branch. To pin a reviewed commit, append `@` and its exact
 ### From npm (only after publication)
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.3.0
+pi install npm:@matuto-ai/pi-broker-connector@0.3.1
 ```
 
 The command requires the version to be present on npm. If publication is still pending, use a reviewed checkout instead.
@@ -79,7 +79,7 @@ Use the existing bundle path; keep its `token` next to `connection.json`. After 
 Install or update **inside the same sandbox**, then use `/reload` in the running Pi:
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.3.0
+pi install npm:@matuto-ai/pi-broker-connector@0.3.1
 ```
 
 This installer command is not a second agent session. No sandbox recreation or Pi process restart is required. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires 0.2.0 or later.
@@ -177,7 +177,7 @@ Tests cover private bundle validation, exact session isolation, duplicate owners
 
 ## Publishing
 
-This release uses package version `0.3.0` and matching GitHub release tag `v0.3.0`. The release workflow publishes the package only after its checks pass.
+This release uses package version `0.3.1` and matching GitHub release tag `v0.3.1`. The release workflow publishes the package only after its checks pass.
 
 The release workflow follows the existing Pi plugin convention: a published GitHub release triggers checks and npm publishing. It requires a `v<package.version>` tag and runs the native host gate before publishing. Nothing is published by CI on pull requests or ordinary pushes.
 
@@ -240,3 +240,7 @@ component, connects to a real fixture HTTPS broker, and recreates HOME while
 preserving the agent directory. It asserts one credential and two distinct
 sessions without a second setup. No model turn or authenticated user-sandbox
 acceptance is claimed. The broker checkout must include its enrollment TLS fixture.
+
+### Masked-field keyboard regression tests
+
+`npm test` requires Python 3 on Linux for the real POSIX PTY keyboard tests. They use only synthetic input and the pinned official Pi TUI 1.4.0 development dependency. Runtime imports resolve through Pi’s native extension loader; no terminal keyboard mode is changed by the connector itself. Legacy text/paste and Kitty printable input are supported, while control keys use the public host decoder. This does not claim complete xterm `modifyOtherKeys` printable-key support.
