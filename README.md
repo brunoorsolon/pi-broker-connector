@@ -2,7 +2,7 @@
 
 A native Pi extension providing durable, session-bound messaging through the [Psst broker](https://github.com/matuto-ai/psst). Runs **inside the Pi process in your existing sandbox**. No host launcher, local model, provider subscription, or additional service is required by the connector.
 
-**Status:** implementation and local tests are prepared. npm publication and a live authenticated user-sandbox test are separate steps, not claimed here.
+**Status:** automatic native delivery below is an unreleased source change. Published 0.1.2 supports hot connection with cooperative receive only. Release preparation and a live authenticated user-sandbox test of automatic delivery remain separate steps.
 
 ## Requirements
 
@@ -38,7 +38,7 @@ pi install npm:@matuto-ai/pi-broker-connector@0.1.2
 
 The proposed scope must be controlled by the publisher before publication. A repository name or workflow does not create an npm account/package. Until published, use the checkout route above; do not treat the npm command as currently available.
 
-### Connect — no restart or environment variable needed
+### Connect — automatic native delivery, no restart
 
 With this version loaded, run one command **in the current Pi session**:
 
@@ -46,15 +46,15 @@ With this version loaded, run one command **in the current Pi session**:
 /psst-connect /absolute/path/to/connection.json
 ```
 
-Use the existing bundle path; keep its `token` next to `connection.json`. Do not copy the JSON alone. The command connects the current native session and saves **only the absolute path**, as one line in `~/.config/psst/pi-config-path`. It does not copy credentials or alter the process environment. `/reload` reads that TXT again. You can also create that TXT yourself (mode `0600`, directory `0700`) and use `/reload`.
+Use the existing bundle path; keep its `token` next to `connection.json`. After connecting, background transport receives messages and the extension automatically delivers them to this Pi session at an idle boundary. `broker_list_clients` lists authorized recipients; `broker_send` sends to an exact client ID. Do not copy the JSON alone. The command connects the current native session and saves **only the absolute path**, as one line in `~/.config/psst/pi-config-path`. It does not copy credentials or alter the process environment. `/reload` reads that TXT again. You can also create that TXT yourself (mode `0600`, directory `0700`) and use `/reload`.
 
-For an existing installation, after the owner publishes this version, update the package **inside the same sandbox**, then use `/reload` in the running Pi and the command above:
+The installation command below selects the current 0.1.2 package, which does not yet include automatic delivery. For this unreleased change use a reviewed checkout; after a future release, install that released version **inside the same sandbox**, then `/reload` in the running Pi:
 
 ```sh
 pi install npm:@matuto-ai/pi-broker-connector@0.1.2
 ```
 
-This installer command is not a second agent session. No sandbox recreation or Pi process restart is required. Version 0.1.1 does not have `/psst-connect`; updating the package and reloading are required first.
+This installer command is not a second agent session. No sandbox recreation or Pi process restart is required. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires this newer source change.
 
 Keep `connection.json` and `token` private to the sandbox user (`0600`), directory `0700`. Never paste tokens into prompts, command arguments, Git, or shared config. Paths must refer to real files rather than symlinks. A `/tmp` bundle works for the current container but may disappear on container removal; remembering its path does not make the bundle persistent.
 
@@ -94,9 +94,21 @@ Example instruction to your Pi agent, after the other connector is running:
 
 Then ask the recipient agent to receive/read, acknowledge, and reply to the sender's exact client ID, preserving `reply_to_message_id` where useful. Check Pi again for `pong`. The peers' enrollment scopes must overlap.
 
-### Delivery semantics and limitations
+### Delivery semantics and controls
 
-This release uses **cooperative tools**, not automatic prompt injection. Background transport stores messages durably while Pi works; it does not trigger a model call, abort work, bypass permissions, overwrite a draft, or wake an idle model. Ask the agent to check its inbox (or include that instruction in an explicitly authorized workflow). No model tokens are spent merely by waiting.
+**Automatic native delivery is the default after connection.** Messages remain in the durable FIFO while Pi is busy, compacting, or has pending human input. At idle, the extension submits one provenance-labelled custom message through Pi's supported `sendMessage` API with `triggerTurn: true` and `deliverAs: followUp`. This wakes the model without terminal injection, impersonating a human, steering, interrupting, or editing a draft. Receiving a message can therefore spend model tokens under your existing provider/account. Polling alone does not call a model.
+
+```text
+/psst-mode manual
+/psst-mode auto
+/psst-disconnect
+```
+
+Manual mode retains the earlier `broker_receive` / `broker_acknowledge` workflow. The mode is remembered per native session. Disconnect stops polling, heartbeat and automatic delivery, preserves the inbox, and remains disconnected on reload until `/psst-connect` is explicitly used again. It does not revoke the installation credential or cancel/retract a native turn already handed to Pi. Broker presence expires through its existing lease policy. No automatic replies or echo rules are installed; self-addressed messages require manual receive to avoid waking a self-loop.
+
+Only one native handoff may be outstanding. The extension records it before submission and advances FIFO only after matching the actual Pi session JSONL custom-message entry. A native API return, an in-memory entry, or model activity alone is not a receipt. Inspection is limited to a 4 MiB append window after the saved pre-handoff file offset. A missing/failed/truncated/out-of-window record leaves `native_handoff_unknown`; it is never automatically resubmitted, including after a crash/reload. This favors no duplicate native turns over silently guessing success. Resolve uncertain handoffs through explicit operator review, not automatic retries. No exactly-once model execution or successful action is promised.
+
+Receipt meanings remain distinct: broker `delivered` = durable local inbox; `native_context_accepted` = matching native transcript entry (historical acceptance, not proof it remains on the active branch or survives later compaction); `explicit_model_read` = cooperative receive/acknowledge; `action_success` remains unknown. Automatic delivery does not create explicit-read receipts.
 
 Broker `delivered` means committed to the receiver's local durable inbox. `broker_acknowledge` means an explicit application-level read acknowledgment; it is **not** a native injection receipt, successful execution, or human approval. Receive alone never advances FIFO. Do not acknowledge unread data. Repeated receive returns the same head/receipt until acknowledged. Peer text is always labeled untrusted and cannot confer permissions.
 
@@ -119,7 +131,7 @@ Tests cover private bundle validation, exact session isolation, duplicate owners
 
 ## Publishing
 
-The `0.1.2` patch adds current-session connection through `/psst-connect` and a saved TXT path. After this PR is merged, the owner can create a GitHub release with tag **`v0.1.2`**. Preparing this PR does not publish that release or npm version.
+This PR does not bump or publish a package version. A separate release-preparation change must select a fresh version before the owner creates its matching GitHub release tag.
 
 The release workflow follows the existing Pi plugin convention: a published GitHub release triggers checks and npm publishing. It requires a `v<package.version>` tag and runs the native host gate before publishing. Nothing is published by CI on pull requests or ordinary pushes.
 
