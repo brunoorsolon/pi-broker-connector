@@ -40,6 +40,7 @@ export class PiBrokerSession {
     } catch (error) { this.inbox.close(); throw error; }
   }
   isAlive() { return !this.closed && this.currentSessionId() === this.hostSessionId; }
+  deliveryAllowed() { return this.isAlive() && !this.runtime.paused && !this.runtime.closed; }
   async start() {
     return this.runtime.start({ name: this.config.name,
       model: { provider: null, id: null, source: 'unknown' }, project: null });
