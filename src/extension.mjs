@@ -1,3 +1,4 @@
+import { resolveConnectionFile } from './connect-config.mjs';
 import { NativeDelivery } from './native-delivery.mjs';
 import { createConfigPathStore, validateConfigPath } from './config-path.mjs';
 import { readConfig } from './config.mjs';
@@ -6,7 +7,7 @@ import { createCooperativeInbox } from './cooperative-inbox.mjs';
 import { createTools, invokeTool } from '../vendor/broker/reference/tools.mjs';
 import { LocalError, safeError } from '../vendor/broker/reference/errors.mjs';
 
-export function installExtension(pi, Type, { configReader = readConfig, pathStore = createConfigPathStore(), env = process.env, createSession = options => new PiBrokerSession(options) } = {}) {
+export function installExtension(pi, Type, { configReader = readConfig, pathStore = createConfigPathStore(), env = process.env, connectionResolver = resolveConnectionFile, createSession = options => new PiBrokerSession(options) } = {}) {
   let owner = null, facade = null, delivery = null, ready = false, status = 'not_configured';
   let generation = 0, operations = Promise.resolve();
   const schedule = operation => {
@@ -59,7 +60,9 @@ export function installExtension(pi, Type, { configReader = readConfig, pathStor
     description: 'Connect this Pi session using an absolute connection.json path; remember only the path',
     handler: async (args, ctx) => {
       try {
-        const path = validateConfigPath(args.trim());
+        const epochBeforePairing = generation, sessionBeforePairing = ctx.sessionManager.getSessionId();
+        const path = await connectionResolver(validateConfigPath(args.trim()), {env});
+        if (epochBeforePairing !== generation || ctx.sessionManager.getSessionId() !== sessionBeforePairing) throw new LocalError('session_mismatch');
         const config = configReader(env, path);
         pathStore.write(path);
         await schedule(epoch => connect(ctx, epoch, config, true));
