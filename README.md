@@ -2,7 +2,7 @@
 
 A native Pi extension providing durable, session-bound messaging through the [Psst broker](https://github.com/matuto-ai/psst). Runs **inside the Pi process in your existing sandbox**. No host launcher, local model, provider subscription, or additional service is required by the connector.
 
-**Status:** automatic native delivery below is an unreleased source change. Published 0.1.2 supports hot connection with cooperative receive only. Release preparation and a live authenticated user-sandbox test of automatic delivery remain separate steps.
+**Version 0.2.0:** automatic native delivery, private-file pairing, and transport-auth pause protection. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
 
 ## Requirements
 
@@ -22,21 +22,21 @@ Run the commands **inside the sandbox where Pi runs**, not on the host.
 pi install /absolute/path/to/pi-broker-connector
 ```
 
-Or, after the npm-scope correction PR is merged into `main`:
+Or use the reviewed default branch:
 
 ```sh
 pi install git:github.com/matuto-ai/pi-broker-connector
 ```
 
-This uses the default branch; wait for the scope correction to merge first. To test before merge, append `@` and the exact reviewed commit from the scope-correction PR. Existing tags are unchanged and may still contain the old npm package identity; do not use an old tag as evidence of the new scope. Publish a new package version only after its source changes have been reviewed and the owner is ready to release it.
+This uses the default branch. To pin a reviewed commit, append `@` and its exact SHA. Existing tags are unchanged and may still contain the old npm package identity; do not use an old tag as evidence of the new scope. Publish a new package version only after its source changes have been reviewed and the owner is ready to release it.
 
 ### From npm (only after publication)
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.1.2
+pi install npm:@matuto-ai/pi-broker-connector@0.2.0
 ```
 
-The proposed scope must be controlled by the publisher before publication. A repository name or workflow does not create an npm account/package. Until published, use the checkout route above; do not treat the npm command as currently available.
+The command requires the version to be present on npm. If publication is still pending, use a reviewed checkout instead.
 
 ### Connect — automatic native delivery, no restart
 
@@ -48,13 +48,13 @@ With this version loaded, run one command **in the current Pi session**:
 
 Use the existing bundle path; keep its `token` next to `connection.json`. After connecting, background transport receives messages and the extension automatically delivers them to this Pi session at an idle boundary. `broker_list_clients` lists authorized recipients; `broker_send` sends to an exact client ID. Do not copy the JSON alone. The command connects the current native session and saves **only the absolute path**, as one line in `~/.config/psst/pi-config-path`. It does not copy credentials or alter the process environment. `/reload` reads that TXT again. You can also create that TXT yourself (mode `0600`, directory `0700`) and use `/reload`.
 
-The installation command below selects the current 0.1.2 package, which does not yet include automatic delivery. For this unreleased change use a reviewed checkout; after a future release, install that released version **inside the same sandbox**, then `/reload` in the running Pi:
+Install or update **inside the same sandbox**, then use `/reload` in the running Pi:
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.1.2
+pi install npm:@matuto-ai/pi-broker-connector@0.2.0
 ```
 
-This installer command is not a second agent session. No sandbox recreation or Pi process restart is required. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires this newer source change.
+This installer command is not a second agent session. No sandbox recreation or Pi process restart is required. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires 0.2.0 or later.
 
 Keep `connection.json` and `token` private to the sandbox user (`0600`), directory `0700`. Never paste tokens into prompts, command arguments, Git, or shared config. Paths must refer to real files rather than symlinks. A `/tmp` bundle works for the current container but may disappear on container removal; remembering its path does not make the bundle persistent.
 
@@ -62,7 +62,7 @@ Existing `PSST_CONFIG_FILE` and `PSST_CONFIG` configurations remain supported: o
 
 ### Pair once with the same command
 
-**Broker dependency:** pairing requires the enrollment API from [Psst PR17](https://github.com/matuto-ai/psst/pull/17) and helper/operator tooling from [PR18](https://github.com/matuto-ai/psst/pull/18). This connector pins the reviewed helper at commit `3e908e79966d886a02d372c103e31dec6e900c1a`; those changes were pending merge/deployment when prepared. Vendoring the helper does not deploy or enable the broker endpoint. Legacy bundles remain usable without that endpoint.
+**Broker dependency:** pairing requires the enrollment API from [Psst PR17](https://github.com/matuto-ai/psst/pull/17) and helper/operator tooling from [PR18](https://github.com/matuto-ai/psst/pull/18). This connector pins the reviewed helper at commit `3e908e79966d886a02d372c103e31dec6e900c1a`; the broker must run a version containing those changes. Vendoring the helper does not deploy or enable the broker endpoint. Legacy bundles remain usable without that endpoint.
 
 When an operator provides a private **pairing file**, use its path instead of an existing bundle:
 
@@ -149,7 +149,7 @@ Tests cover private bundle validation, exact session isolation, duplicate owners
 
 ## Publishing
 
-This PR does not bump or publish a package version. A separate release-preparation change must select a fresh version before the owner creates its matching GitHub release tag.
+This release uses package version `0.2.0` and matching GitHub release tag `v0.2.0`. The release workflow publishes the package only after its checks pass.
 
 The release workflow follows the existing Pi plugin convention: a published GitHub release triggers checks and npm publishing. It requires a `v<package.version>` tag and runs the native host gate before publishing. Nothing is published by CI on pull requests or ordinary pushes.
 
