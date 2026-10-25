@@ -38,6 +38,34 @@ pi install npm:@matuto-ai/pi-broker-connector@0.2.0
 
 The command requires the version to be present on npm. If publication is still pending, use a reviewed checkout instead.
 
+### Native first-time setup (new source; not in published 0.2.0)
+
+Run `/psst-setup` **without arguments** inside Pi. It asks for the HTTPS broker
+URL, explicit authorization confirmation, then an operator-issued one-time secret
+in a focused **masked native field**. Never put that secret in the command, chat,
+a tool argument or ordinary Pi editor. The connector generates its own connection
+credential and keeps the generated files internal; you do not copy a bundle or
+ticket file into the sandbox. This requires a broker with scoped pairing enabled
+and an operator-approved grant for this installation/type/scope. A URL alone is
+not authorization. The initial operator grant and secure handoff remain necessary;
+this is not anonymous enrollment or a completed operator-provisioning UI.
+
+The nonsecret URL is remembered in Pi's agent directory. `PSST_BROKER_URL` is an
+optional explicit URL override; an origin mismatch fails instead of silently
+sending a saved credential elsewhere. After successful setup, new native sessions
+automatically use the saved credential, with independent session identities and
+mailboxes. No setup command, environment edit or re-enrollment is needed for each
+session sharing that persisted agent directory. Different project/profile mounts
+are different installations. Authentication failure or credential expiry never
+uses a leftover pairing secret to mint another identity; explicitly authorize a
+replacement when required. Repeating setup with a connected session asks for
+replacement confirmation and retains the old mailbox.
+
+The memory-input helper is pinned to reviewed source in [broker PR20](https://github.com/matuto-ai/psst/pull/20);
+that dependency is not assumed merged or deployed. Native input is interactive-only;
+RPC/headless contexts cannot fall back to secret text in chat. `/psst-connect` with
+an existing private file remains a compatibility option, not the new setup route.
+
 ### Connect — automatic native delivery, no restart
 
 With this version loaded, run one command **in the current Pi session**:
@@ -46,7 +74,7 @@ With this version loaded, run one command **in the current Pi session**:
 /psst-connect /absolute/path/to/connection.json
 ```
 
-Use the existing bundle path; keep its `token` next to `connection.json`. After connecting, background transport receives messages and the extension automatically delivers them to this Pi session at an idle boundary. `broker_list_clients` lists authorized recipients; `broker_send` sends to an exact client ID. Do not copy the JSON alone. The command connects the current native session and saves **only the absolute path**, as one line in `~/.config/psst/pi-config-path`. It does not copy credentials or alter the process environment. `/reload` reads that TXT again. You can also create that TXT yourself (mode `0600`, directory `0700`) and use `/reload`.
+Use the existing bundle path; keep its `token` next to `connection.json`. After connecting, background transport receives messages and the extension automatically delivers them to this Pi session at an idle boundary. `broker_list_clients` lists authorized recipients; `broker_send` sends to an exact client ID. Do not copy the JSON alone. The command connects the current native session and saves a private installation selection in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/psst/selection.sqlite`. This selection contains a path and nonsecret metadata, not the token. `/reload` reads it again. Old private `pi-config-path` TXT selections remain a read-only compatibility fallback when no new selection exists.
 
 Install or update **inside the same sandbox**, then use `/reload` in the running Pi:
 
@@ -58,11 +86,11 @@ This installer command is not a second agent session. No sandbox recreation or P
 
 Keep `connection.json` and `token` private to the sandbox user (`0600`), directory `0700`. Never paste tokens into prompts, command arguments, Git, or shared config. Paths must refer to real files rather than symlinks. A `/tmp` bundle works for the current container but may disappear on container removal; remembering its path does not make the bundle persistent.
 
-Existing `PSST_CONFIG_FILE` and `PSST_CONFIG` configurations remain supported: on session start/reload, precedence is `PSST_CONFIG_FILE`, then `PSST_CONFIG`, then the saved TXT. `/psst-connect` explicitly selects the path for the current instance; it warns if inherited environment settings will take precedence on the next reload. `PSST_NAME` defaults to `Pi`; `PSST_STATE_DIR` defaults to `~/.local/state/psst/pi`. `/psst-status` displays status and the session's exact client ID. Repeated connect closes the previous runtime before reopening the same session inbox; invalid input leaves the current connection untouched. Connection failures retain the selected path for `/reload` retry.
+Existing `PSST_CONFIG_FILE` and `PSST_CONFIG` configurations remain supported: on session start/reload, precedence is `PSST_CONFIG_FILE`, then `PSST_CONFIG`, then the saved installation selection. `/psst-connect` explicitly selects the path for the current instance; it warns if inherited environment settings will take precedence on the next reload. `PSST_NAME` defaults to `Pi`; `PSST_STATE_DIR` defaults to `${PI_CODING_AGENT_DIR:-~/.pi/agent}/psst` for new installations. `/psst-status` displays status and the session's exact client ID. Repeated connect closes the previous runtime before reopening the same session inbox; invalid input leaves the current connection untouched. Failed new connections leave the previous saved selection unchanged. Successful explicit connection updates use compare-and-swap so concurrent changes are not silently overwritten.
 
 ### Pair once with the same command
 
-**Broker dependency:** pairing requires the enrollment API from [Psst PR17](https://github.com/matuto-ai/psst/pull/17) and helper/operator tooling from [PR18](https://github.com/matuto-ai/psst/pull/18). This connector pins the reviewed helper at commit `3e908e79966d886a02d372c103e31dec6e900c1a`; the broker must run a version containing those changes. Vendoring the helper does not deploy or enable the broker endpoint. Legacy bundles remain usable without that endpoint.
+**Broker dependency:** pairing requires the enrollment API from [Psst PR17](https://github.com/matuto-ai/psst/pull/17) and helper/operator tooling from [PR18](https://github.com/matuto-ai/psst/pull/18). This connector pins the reviewed helper at commit `4a9d604e1107a92c94f8b8a2f0e1cb2d1e2ecc39`; the broker must run a version containing those changes. Vendoring the helper does not deploy or enable the broker endpoint. Legacy bundles remain usable without that endpoint.
 
 When an operator provides a private **pairing file**, use its path instead of an existing bundle:
 
@@ -165,3 +193,50 @@ pi remove /absolute/path/to/pi-broker-connector
 ```
 
 Restart/reload Pi. State and private enrollment files are deliberately retained for recovery; remove them only when you intend to abandon that mailbox.
+
+## Persistent storage across native sessions
+
+New installations keep enrollment in `installation-credentials/` and independent
+session journals under
+`PI_CODING_AGENT_DIR/psst` (default `~/.pi/agent/psst`). The remembered selection
+is one private SQLite record containing the connection path, broker origin and
+revision. Explicit setup commits it only after successful current-session connect;
+compare-and-swap prevents concurrent setups overwriting a newer selection. This follows the existing
+Pi agent-directory mount in a sandbox; different projects/profiles with different
+agent directories remain separate installations. No host or launcher change is made.
+An explicit `PSST_STATE_DIR` continues to select the inbox/enrollment root.
+
+Existing `~/.local/state/psst/pi` is deliberately preserved, not silently copied
+or moved: old running plugins do not participate in a new migration lock. A
+legacy-storage warning identifies this compatibility mode for inboxes; new
+native setup credentials still go to the persisted agent directory, not that
+legacy inbox root (unless PSST_STATE_DIR explicitly overrides storage). It does **not** mean
+the old path has become durable across sandbox recreation. The old
+`~/.config/psst/pi-config-path` and native `pi-config-path` TXT are still read when
+no SQLite selection exists; writing a new selection leaves those files untouched.
+A native selection wins once explicitly saved, but invalid native selections
+never fall back to old credentials. If both legacy and native roots contain state,
+startup fails with `storage_migration_required` rather than choosing one history.
+Selection database/journal and known private atomic-selection temporaries are
+metadata, not another inbox history; an empty legacy root is conservatively retained.
+An explicit state override can choose the intended existing root. Coordinated
+offline migration remains an operator recovery task; preserve all old state.
+
+Each native session has its own identity, inbox, outgoing retry ledger and owner
+lock. Reopening the same session retains those records; a different session never
+adopts them. This storage change does not authorize first enrollment, mint another
+credential on startup, or remove the current pairing-file onboarding requirement.
+
+Developer-only native setup proof (disposable CA/grants; Python3/PTY and OpenSSL):
+
+```sh
+PI_TEST_INSTALL=/path/to/official-pi-1.4.0 \
+PSST_TEST_BROKER_ROOT=/path/to/reviewed-psst \
+node scripts/native-setup-tls.probe.mjs
+```
+
+This opens the actual Pi UI, enters only a synthetic grant through the masked
+component, connects to a real fixture HTTPS broker, and recreates HOME while
+preserving the agent directory. It asserts one credential and two distinct
+sessions without a second setup. No model turn or authenticated user-sandbox
+acceptance is claimed. The broker checkout must include its enrollment TLS fixture.

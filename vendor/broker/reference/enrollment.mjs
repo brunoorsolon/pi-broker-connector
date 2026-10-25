@@ -56,13 +56,22 @@ function post(url, secret, body) {
   });
 }
 /** Explicit connect only. The optional transport is a test seam, never a user configuration field. */
-export async function connectPairingFile({pairingFile,directory,clientType,brokerUrl}, {transport = post} = {}) {
+export function connectPairingFile(options, testOptions) {
+  return connectPairing({...options, pairingSecret:undefined}, testOptions);
+}
+/** Only a native private-input callback may supply this secret, never a model tool argument. */
+export function connectPairingSecret({brokerUrl,pairingSecret,directory,clientType}, testOptions) {
+  return connectPairing({brokerUrl,pairingSecret,directory,clientType}, testOptions);
+}
+async function connectPairing({pairingFile,pairingSecret,directory,clientType,brokerUrl}, {transport = post} = {}) {
   let lock, lockPath;
   try {
     if (!TYPES.includes(clientType)) fail('invalid_client_type');
-    const pair = JSON.parse(privateRead(pairingFile));
+    const pair = pairingFile === undefined
+      ? {format:'psst-pairing-v1',client_type:clientType,pairing_secret:pairingSecret,broker_url:brokerUrl}
+      : JSON.parse(privateRead(pairingFile));
     if (!pair || pair.format !== 'psst-pairing-v1' || pair.client_type !== clientType || typeof pair.pairing_secret !== 'string'
-      || !/^[A-Za-z0-9_-]{43}$/.test(pair.pairing_secret) || !Number.isFinite(Date.parse(pair.expires_at))) fail('invalid_pairing_file');
+      || !/^[A-Za-z0-9_-]{43}$/.test(pair.pairing_secret) || (pairingFile !== undefined && !Number.isFinite(Date.parse(pair.expires_at)))) fail('invalid_pairing_file');
     const broker = origin(pair.broker_url);
     if (brokerUrl !== undefined && origin(brokerUrl) !== broker) fail('broker_origin_mismatch');
     privateDir(directory);
