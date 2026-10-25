@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+- Add `/psst-setup` inside Pi: HTTPS URL, explicit consent and a masked native field for the one-time operator-approved secret. No secret in chat/command arguments and no bundle/ticket-file transfer for this route.
+- Persist each installation credential under the native `PI_CODING_AGENT_DIR` scope. New sessions reconnect automatically with independent client IDs and inboxes; setup is not repeated for every session.
+- Atomically save URL and connection selection only after successful current-session attachment, using cross-process compare-and-swap. Failed or concurrent setups do not overwrite another selected installation.
+- Preserve existing private-file connections, explicit state overrides and legacy inboxes. New credentials persist separately even when a legacy inbox root exists. Old pending inboxes are **not migrated** or made durable retroactively; retain them for coordinated recovery.
+- Never automatically mint replacement credentials on authentication failure or expiry. Broker 0.3.0 pairing must be explicitly enabled and an operator grant approved once per installation/type/scope.
+- Verify 30 independent sessions and 30 concurrent selection writers; exercise official Pi 1.4.0 masked UI against a real disposable HTTPS broker, then recreate HOME with only the agent directory retained: one credential, two sessions, automatic reconnection.
+
+After release publication and npm workflow success:
+`pi install npm:@matuto-ai/pi-broker-connector@0.3.0`, then `/reload` and first-time `/psst-setup` inside Pi. Existing configured sessions reconnect without first-time setup. Different project/profile agent-directory mounts are separate installations. This release does not deploy the broker, approve live grants, or certify a logged-in user's model exchange.
+
 ## 0.2.0
 
 - Automatically deliver queued peer messages through native Pi idle turns, without steering or interrupting busy work.

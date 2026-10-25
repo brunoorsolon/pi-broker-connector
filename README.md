@@ -2,12 +2,12 @@
 
 A native Pi extension providing durable, session-bound messaging through the [Psst broker](https://github.com/matuto-ai/psst). Runs **inside the Pi process in your existing sandbox**. No host launcher, local model, provider subscription, or additional service is required by the connector.
 
-**Version 0.2.0:** automatic native delivery, private-file pairing, and transport-auth pause protection. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
+**Version 0.3.0:** native private setup, persistent installation selection and automatic reconnection of independent Pi sessions, retaining automatic native delivery and transport-auth pause protection. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
 
 ## Requirements
 
 - Node **24.19+ within major 24** and Pi **1.4.0** (the tested host version).
-- A reachable HTTPS Psst v1 broker, and an operator-issued **Pi-specific private connection bundle**. `/healthz` success alone does not enroll a client.
+- A reachable HTTPS Psst broker **0.3.0 with pairing enabled**, and one operator-approved **Pi-specific one-time pairing secret** per installation/scope. `/healthz` success or the broker URL alone does not authorize access. Existing connection bundles remain a compatibility option.
 - Writable local persistent storage, not a shared/NFS directory. Preserve it across sandbox recreation if you want to resume the same Pi session.
 
 The connector vendors the broker's dependency-free client; it does not fetch broker code at runtime. Pi supplies `typebox` and its host API as peer dependencies.
@@ -33,14 +33,15 @@ This uses the default branch. To pin a reviewed commit, append `@` and its exact
 ### From npm (only after publication)
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.2.0
+pi install npm:@matuto-ai/pi-broker-connector@0.3.0
 ```
 
 The command requires the version to be present on npm. If publication is still pending, use a reviewed checkout instead.
 
-### Native first-time setup (new source; not in published 0.2.0)
+### Connect once inside Pi — no bundle to copy
 
-Run `/psst-setup` **without arguments** inside Pi. It asks for the HTTPS broker
+After installing/updating, use `/reload` in the running Pi, then run
+`/psst-setup` **without arguments** inside Pi. It asks for the HTTPS broker
 URL, explicit authorization confirmation, then an operator-issued one-time secret
 in a focused **masked native field**. Never put that secret in the command, chat,
 a tool argument or ordinary Pi editor. The connector generates its own connection
@@ -61,12 +62,11 @@ uses a leftover pairing secret to mint another identity; explicitly authorize a
 replacement when required. Repeating setup with a connected session asks for
 replacement confirmation and retains the old mailbox.
 
-The memory-input helper is pinned to reviewed source in [broker PR20](https://github.com/matuto-ai/psst/pull/20);
-that dependency is not assumed merged or deployed. Native input is interactive-only;
+The memory-input helper is pinned to merged source in [broker PR20](https://github.com/matuto-ai/psst/pull/20). This does not deploy or enable pairing on your broker. Native input is interactive-only;
 RPC/headless contexts cannot fall back to secret text in chat. `/psst-connect` with
 an existing private file remains a compatibility option, not the new setup route.
 
-### Connect — automatic native delivery, no restart
+### Compatibility: connect with an existing private file
 
 With this version loaded, run one command **in the current Pi session**:
 
@@ -79,7 +79,7 @@ Use the existing bundle path; keep its `token` next to `connection.json`. After 
 Install or update **inside the same sandbox**, then use `/reload` in the running Pi:
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.2.0
+pi install npm:@matuto-ai/pi-broker-connector@0.3.0
 ```
 
 This installer command is not a second agent session. No sandbox recreation or Pi process restart is required. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires 0.2.0 or later.
@@ -88,9 +88,9 @@ Keep `connection.json` and `token` private to the sandbox user (`0600`), directo
 
 Existing `PSST_CONFIG_FILE` and `PSST_CONFIG` configurations remain supported: on session start/reload, precedence is `PSST_CONFIG_FILE`, then `PSST_CONFIG`, then the saved installation selection. `/psst-connect` explicitly selects the path for the current instance; it warns if inherited environment settings will take precedence on the next reload. `PSST_NAME` defaults to `Pi`; `PSST_STATE_DIR` defaults to `${PI_CODING_AGENT_DIR:-~/.pi/agent}/psst` for new installations. `/psst-status` displays status and the session's exact client ID. Repeated connect closes the previous runtime before reopening the same session inbox; invalid input leaves the current connection untouched. Failed new connections leave the previous saved selection unchanged. Successful explicit connection updates use compare-and-swap so concurrent changes are not silently overwritten.
 
-### Pair once with the same command
+### Compatibility: operator-provided pairing files
 
-**Broker dependency:** pairing requires the enrollment API from [Psst PR17](https://github.com/matuto-ai/psst/pull/17) and helper/operator tooling from [PR18](https://github.com/matuto-ai/psst/pull/18). This connector pins the reviewed helper at commit `4a9d604e1107a92c94f8b8a2f0e1cb2d1e2ecc39`; the broker must run a version containing those changes. Vendoring the helper does not deploy or enable the broker endpoint. Legacy bundles remain usable without that endpoint.
+**Broker dependency:** pairing requires the opt-in enrollment API included in broker 0.3.0. This connector vendors the helper at commit `4a9d604e1107a92c94f8b8a2f0e1cb2d1e2ecc39`; the helper runs locally inside Pi, not on the server. Vendoring the helper does not deploy or enable the broker endpoint. Legacy bundles remain usable without that endpoint.
 
 When an operator provides a private **pairing file**, use its path instead of an existing bundle:
 
@@ -100,7 +100,7 @@ When an operator provides a private **pairing file**, use its path instead of an
 
 The extension recognizes `psst-pairing-v1`, generates a unique installation credential locally, saves retry state before contacting `/v1/enrollments`, and remembers the resulting ordinary connection bundle. The pairing secret is read only from the private file: never paste it into a command, prompt, URL, or model tool. No environment variable, new agent, or sandbox restart is needed. Existing connection bundles still work unchanged.
 
-Enrollment files live under the configured state root's `installations/` directory with private permissions. Uncertain responses reuse the same durable enrollment request and token when you repeat the command; they do not silently allocate another identity. An expired/revoked credential requires an explicitly supplied new pairing file, not automatic credential minting. Pairing uses normal verified HTTPS; private-CA override is not currently supported by the shared pairing helper (legacy bundles still support their existing CA option).
+New enrollment files live privately under the native agent directory's `psst/installation-credentials/`. Explicit `PSST_STATE_DIR` uses its `installations/` directory. Existing legacy file-pairing attempts retain their original retry directory. Uncertain responses reuse the same durable enrollment request and token when you repeat the command; they do not silently allocate another identity. An expired/revoked credential requires a newly approved secret through `/psst-setup` (or a new compatibility pairing file), never automatic credential minting. Pairing uses normal verified HTTPS; private-CA override is not currently supported by the shared pairing helper (legacy bundles still support their existing CA option).
 
 Each installation credential is separate from each native Pi session identity. The private enrollment receipt is verified against the broker, client type and token before it can bind local state. Reload of the same native session and enrollment resumes its mailbox; a fresh pairing credential creates a separate mailbox and retains old state rather than adopting it. Legacy bundles without an enrollment receipt retain their original session binding. Pairing completion after a session switch/shutdown cannot attach to the departed session.
 
@@ -160,7 +160,7 @@ Broker `delivered` means committed to the receiver's local durable inbox. `broke
 
 Each native Pi session has its own durable identity, bound to the endpoint and Pi session ID. `/new` gets a separate mailbox. `/reload`, process restart, or `/resume` of the same Pi session can reconnect its identity; no old inbox is silently adopted by another session. Shutdown stops background tasks and releases the local database lock. It leaves the broker lease to expire rather than permanently closing the identity, so reload/resume remains possible. Concurrent ownership of the same local inbox fails closed.
 
-No settings, credentials, enrollment, provider routing, Nginx rules, or host installations are changed by installing this package. Without a bundle the extension stays disconnected. A failed startup is surfaced as a sanitized diagnostic; fix the bundle/network/permissions and `/reload`.
+No settings, credentials, enrollment, provider routing, Nginx rules, or host installations are changed by installing this package. Without a selected credential the extension stays disconnected until native setup. A failed startup is surfaced as a sanitized diagnostic; check network/permissions and use `/reload` to retry the saved credential. Do not re-pair merely to hide an uncertain transport result.
 
 ## Development and verification
 
@@ -177,7 +177,7 @@ Tests cover private bundle validation, exact session isolation, duplicate owners
 
 ## Publishing
 
-This release uses package version `0.2.0` and matching GitHub release tag `v0.2.0`. The release workflow publishes the package only after its checks pass.
+This release uses package version `0.3.0` and matching GitHub release tag `v0.3.0`. The release workflow publishes the package only after its checks pass.
 
 The release workflow follows the existing Pi plugin convention: a published GitHub release triggers checks and npm publishing. It requires a `v<package.version>` tag and runs the native host gate before publishing. Nothing is published by CI on pull requests or ordinary pushes.
 
