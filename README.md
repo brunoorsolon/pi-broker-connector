@@ -28,12 +28,12 @@ Or, after the npm-scope correction PR is merged into `main`:
 pi install git:github.com/matuto-ai/pi-broker-connector
 ```
 
-This uses the default branch; wait for the scope correction to merge first. To test before merge, append `@` and the exact reviewed commit from the scope-correction PR. Existing tags are unchanged and may still contain the old npm package identity; do not use an old tag as evidence of the new scope. Publishing the new scoped npm package remains paused until source corrections are reviewed and publication is explicitly resumed.
+This uses the default branch; wait for the scope correction to merge first. To test before merge, append `@` and the exact reviewed commit from the scope-correction PR. Existing tags are unchanged and may still contain the old npm package identity; do not use an old tag as evidence of the new scope. Publish a new package version only after its source changes have been reviewed and the owner is ready to release it.
 
 ### From npm (only after publication)
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.1.0
+pi install npm:@matuto-ai/pi-broker-connector@0.1.1
 ```
 
 The proposed scope must be controlled by the publisher before publication. A repository name or workflow does not create an npm account/package. Until published, use the checkout route above; do not treat the npm command as currently available.
@@ -110,6 +110,8 @@ npm pack --dry-run
 Tests cover private bundle validation, exact session isolation, duplicate ownership, durable resume, real HTTP broker A→B→A with disposable fixture credentials, idempotent sends, persistent read receipts, invalid/uncertain ACKs, and rollback behavior. The host gate uses the **official Pi 1.4.0 extension loader and package installer** in a temporary HOME. It does not use a real model or claim a physical terminal/user-sandbox test. Fixtures allow numeric-loopback HTTP only in test code; public config stays HTTPS-only.
 
 ## Publishing
+
+The `0.1.1` patch prepares the next trusted-publisher run without changing runtime behavior. After this version-bump PR is merged, the owner can create a GitHub release with tag **`v0.1.1`**. Preparing this PR does not publish that release or npm version.
 
 The release workflow follows the existing Pi plugin convention: a published GitHub release triggers checks and npm publishing. It requires a `v<package.version>` tag and runs the native host gate before publishing. Nothing is published by CI on pull requests or ordinary pushes.
 
