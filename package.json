@@ -1,6 +1,6 @@
 {
   "name": "@matuto-ai/pi-broker-connector",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Session-bound Psst broker messaging tools for Pi",
   "type": "module",
   "license": "MIT",
