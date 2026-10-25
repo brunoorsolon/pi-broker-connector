@@ -1,0 +1,15 @@
+{
+  "name": "@brunoorsolon/pi-broker-connector",
+  "version": "0.1.0",
+  "description": "Session-bound Psst broker messaging tools for Pi",
+  "type": "module",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/matuto-ai/pi-broker-connector.git" },
+  "engines": { "node": ">=24.19.0 <25" },
+  "keywords": ["pi-package", "pi", "psst", "broker"],
+  "files": ["extensions/", "src/", "vendor/", "README.md", "LICENSE"],
+  "pi": { "extensions": ["./extensions/psst.ts"] },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typebox": "*" },
+  "scripts": { "test": "node --test test/*.test.mjs", "check": "node scripts/check.mjs", "test:host": "node --test test/native-host.probe.mjs", "prepack": "npm run check && npm test" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" }
+}

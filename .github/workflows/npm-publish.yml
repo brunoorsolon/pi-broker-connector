@@ -1,0 +1,29 @@
+name: Publish npm package
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Require release tag matching package version
+        run: node -e 'const p=require("./package.json"); if(process.env.RELEASE_TAG!==`v${p.version}`) throw Error("Release tag must match package version");'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - run: npm run check
+      - run: npm test
+      - run: npm install --prefix "$RUNNER_TEMP/pi-host" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.4.0
+      - run: npm run test:host
+        env:
+          PI_TEST_INSTALL: ${{ runner.temp }}/pi-host
+      - run: npm publish --access public --provenance
