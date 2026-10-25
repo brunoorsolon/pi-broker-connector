@@ -196,7 +196,8 @@ Restart/reload Pi. State and private enrollment files are deliberately retained 
 
 ## Persistent storage across native sessions
 
-New installations keep both enrollment and independent session journals under
+New installations keep enrollment in `installation-credentials/` and independent
+session journals under
 `PI_CODING_AGENT_DIR/psst` (default `~/.pi/agent/psst`). The remembered selection
 is one private SQLite record containing the connection path, broker origin and
 revision. Explicit setup commits it only after successful current-session connect;
@@ -207,7 +208,9 @@ An explicit `PSST_STATE_DIR` continues to select the inbox/enrollment root.
 
 Existing `~/.local/state/psst/pi` is deliberately preserved, not silently copied
 or moved: old running plugins do not participate in a new migration lock. A
-legacy-storage warning identifies this compatibility mode; it does **not** mean
+legacy-storage warning identifies this compatibility mode for inboxes; new
+native setup credentials still go to the persisted agent directory, not that
+legacy inbox root (unless PSST_STATE_DIR explicitly overrides storage). It does **not** mean
 the old path has become durable across sandbox recreation. The old
 `~/.config/psst/pi-config-path` and native `pi-config-path` TXT are still read when
 no SQLite selection exists; writing a new selection leaves those files untouched.

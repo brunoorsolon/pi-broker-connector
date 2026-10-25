@@ -6,6 +6,7 @@ root=pathlib.Path(tempfile.mkdtemp(prefix='psst-pi-private-probe-')); secret='sy
 import {writeFileSync} from 'node:fs';
 export default function(pi){pi.registerCommand('psst-private-probe',{description:'synthetic private UI fixture',handler:async(_args,ctx)=>{const value=await promptPairingSecret(ctx);writeFileSync(process.env.PROBE_RESULT,JSON.stringify({matches:value==='synthetic_'.padEnd(43,'A'),nativeEntriesLeak:JSON.stringify(ctx.sessionManager.getEntries()).includes(value)}));pi.appendEntry('psst-private-probe',{result:'complete'});ctx.ui.notify('PRIVATE_PROBE_COMPLETE');}});}
 '''.replace('__PRIVATE_INPUT__',str(project/'src/private-input.mjs')))
+assert json.loads((host/'node_modules/@earendil-works/pi-coding-agent/package.json').read_text())['version']=='1.4.0'
 m,s=pty.openpty();env={'PATH':os.environ['PATH'],'HOME':str(root),'PI_CODING_AGENT_DIR':str(root/'agent'),'PI_OFFLINE':'1','TERM':'xterm-256color','PROBE_RESULT':str(root/'result.json')}
 p=subprocess.Popen(['node',str(host/'node_modules/@earendil-works/pi-coding-agent/dist/cli.js'),'--offline','--no-extensions','--no-mcp','--no-skills','--no-context-files','--no-approve','--no-prompt-templates','--no-themes','--no-tools','-e',str(root/'probe.ts')],stdin=s,stdout=s,stderr=s,env=env,cwd=root,start_new_session=True);os.close(s);out=b''
 def read_for(seconds):

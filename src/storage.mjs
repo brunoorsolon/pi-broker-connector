@@ -21,6 +21,7 @@ export function storageLayout(env = process.env, home = homedir()) {
     // be enrollment/inbox state: never choose one history and hide the other.
     if (readdirSync(nativeRoot).some(name => {
       if (name === 'pi-config-path' || name === 'selection.sqlite' || name === 'selection.sqlite-journal') return false;
+      if(name === 'installation-credentials'){const s=lstatSync(join(nativeRoot,name));if(!s.isDirectory()||s.isSymbolicLink()||realpathSync(join(nativeRoot,name))!==join(nativeRoot,name)||(s.mode&0o077)||(process.getuid&&s.uid!==process.getuid()))throw new LocalError('invalid_configuration');return false;}
       if (/^\.(?:pi-config-path-|broker-)[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(name)) {
         try { const temp=lstatSync(join(nativeRoot,name)); return !temp.isFile() || temp.isSymbolicLink() || Boolean(temp.mode&0o077) || Boolean(process.getuid && temp.uid!==process.getuid()); }
         catch (error) { if (error.code==='ENOENT') return false; throw new LocalError('invalid_configuration'); }
@@ -29,5 +30,6 @@ export function storageLayout(env = process.env, home = homedir()) {
     })) throw new LocalError('storage_migration_required');
   }
   const stateDirectory = resolve(env.PSST_STATE_DIR || (legacy ? legacyRoot : nativeRoot));
-  return { stateDirectory, selectionDirectory: nativeRoot, legacySelection, legacyStorage: legacy };
+  const installationDirectory=env.PSST_STATE_DIR?join(stateDirectory,'installations'):join(nativeRoot,'installation-credentials');
+  return { stateDirectory, installationDirectory, selectionDirectory: nativeRoot, legacySelection, legacyStorage: legacy };
 }

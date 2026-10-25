@@ -30,6 +30,8 @@ test('legacy selection and inbox stay pinned; coexistence of two histories fails
  writeFileSync(temporary,join(home,'old.json')+'\n',{mode:0o600});
  assert.equal(storageLayout({},home).stateDirectory,legacy);assert.equal(store.read(),join(home,'old.json'));
  rmSync(temporary);
+ mkdirSync(join(layout.selectionDirectory,'installation-credentials'),{mode:0o700});
+ assert.equal(storageLayout({},home).stateDirectory,legacy);assert.equal(storageLayout({},home).installationDirectory,join(layout.selectionDirectory,'installation-credentials'));
  mkdirSync(join(layout.selectionDirectory,'installations'),{mode:0o700});
  assert.throws(()=>storageLayout({},home),{code:'storage_migration_required'});
  assert.equal(storageLayout({PSST_STATE_DIR:legacy},home).stateDirectory,legacy);

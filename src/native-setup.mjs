@@ -24,7 +24,7 @@ export async function nativeSetup(ctx,{env=process.env,settings=nativeBrokerSett
  let pairingSecret=await privateInput(ctx);
  if(pairingSecret===undefined||!stillCurrent())return null;
  try {
-  const result=await pairingConnector({brokerUrl,pairingSecret,directory:join(storageLayout(env).stateDirectory,'installations'),clientType:'pi'});
+  const result=await pairingConnector({brokerUrl,pairingSecret,directory:storageLayout(env).installationDirectory,clientType:'pi'});
   if(!stillCurrent())throw new LocalError('session_mismatch');
   return {connectionFile:result.connectionFile,brokerUrl};
  } finally {pairingSecret=undefined;}
