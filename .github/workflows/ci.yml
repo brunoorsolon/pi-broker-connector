@@ -1,0 +1,25 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --legacy-peer-deps
+      - run: npm run check
+      - run: npm test
+      - name: Install pinned official Pi in isolated fixture
+        run: npm install --prefix "$RUNNER_TEMP/pi-host" --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.4.0
+      - name: Verify native loader and installer
+        run: npm run test:host
+        env:
+          PI_TEST_INSTALL: ${{ runner.temp }}/pi-host
+      - run: npm pack --dry-run
