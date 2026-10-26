@@ -1,0 +1,10 @@
+# Same exact Node 24.19 baseline already verified by upstream broker container CI.
+FROM node:24.19.0-bookworm-slim@sha256:a9f5f7c91a432850b2a8a7797adf5eadb6c733ceed61167806cee7ea7fbc29df
+RUN npm install --prefix /opt/pi-host --ignore-scripts --no-audit --no-fund @earendil-works/pi-coding-agent@1.4.0
+WORKDIR /connector
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --legacy-peer-deps --no-audit --no-fund
+COPY extensions ./extensions
+COPY src ./src
+COPY vendor ./vendor
+USER node

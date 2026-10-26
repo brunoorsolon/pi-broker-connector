@@ -9,6 +9,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Checkout exact reviewed broker integration fixture
+        uses: actions/checkout@v6
+        with:
+          repository: matuto-ai/psst
+          ref: 72f5d2d1b834e02cfb6b2f7dc11c6f1a55729344
+          path: .ci/psst
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -22,4 +28,17 @@ jobs:
         run: npm run test:host
         env:
           PI_TEST_INSTALL: ${{ runner.temp }}/pi-host
+      - name: Verify actual Pi PTY, admin approval, HTTPS and thirty waiting SDK sessions
+        run: npm run test:approval
+        env:
+          PI_TEST_INSTALL: ${{ runner.temp }}/pi-host
+          PSST_TEST_SOURCE: .ci/psst
+      - name: Build disposable native Pi test container
+        run: docker build -f test/containers/Containerfile -t psst-pi-approval-ci .
+      - name: Verify real container recreation with only native agent storage retained
+        run: npm run test:approval
+        env:
+          PI_TEST_INSTALL: ${{ runner.temp }}/pi-host
+          PSST_TEST_SOURCE: .ci/psst
+          PI_TEST_CONTAINER_IMAGE: psst-pi-approval-ci
       - run: npm pack --dry-run

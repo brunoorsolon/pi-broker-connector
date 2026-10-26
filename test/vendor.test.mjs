@@ -19,3 +19,10 @@ test('shared pairing helper exactly matches its separately pinned upstream commi
  assert.equal(createHash('sha256').update(bytes).digest('hex'),pin.sha256);
  assert.equal(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),pin.git_blob);
 });
+test('admin-approval helper matches exact reviewed upstream anchor',()=>{
+ const root=new URL('../vendor/broker/',import.meta.url),pin=JSON.parse(readFileSync(new URL('APPROVAL_UPSTREAM.json',root),'utf8'));
+ assert.equal(pin.commit,'72f5d2d1b834e02cfb6b2f7dc11c6f1a55729344');
+ const bytes=readFileSync(new URL(pin.path,root));
+ assert.equal(createHash('sha256').update(bytes).digest('hex'),pin.sha256);
+ assert.equal(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),pin.git_blob);
+});

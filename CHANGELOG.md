@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — prepared, not released
+
+- Replace primary secret-entry setup with one native URL field and administrator-approved access requests.
+- Persist explicit pending intent before network effects; reopen resumes status checks without creating credentials.
+- Preserve approved selection during replacement, fence cancellation/late responses, and stop terminal approval waits.
+- Keep native automatic delivery, independent session mailboxes, persistent agent-directory storage and 0.3.1 keyboard handling unchanged.
+
+
 ## 0.3.1
 
 - Fix the masked pairing field ignoring Enter, Escape and Ctrl+C when the terminal negotiates Kitty keyboard sequences. Use the public Pi TUI key decoder, ignore key releases, and preserve legacy input.

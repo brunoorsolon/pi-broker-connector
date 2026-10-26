@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/matuto-ai/psst",
+  "commit": "72f5d2d1b834e02cfb6b2f7dc11c6f1a55729344",
+  "path": "reference/approval.mjs",
+  "git_blob": "8e6128c22835e66c0ab50aa15c27ff16d33e1169",
+  "sha256": "a60c3a0ccd7deb50556586cd67841bb89a300ea3c7f1af3a91d437f856b7a2d5",
+  "dependency": "https://github.com/matuto-ai/psst/pull/22"
+}

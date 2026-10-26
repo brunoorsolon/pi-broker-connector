@@ -60,3 +60,16 @@ test('thirty independent processes compare-and-swap one atomic URL/path selectio
  assert.equal(outcomes.filter(r=>r.stdout.trim()==='true').length,1);assert.equal(outcomes.filter(r=>r.stdout.trim()==='false').length,29);
  const after=store.snapshot();assert.equal(after.brokerUrl,'https://next.example');assert.notEqual(after.revision,before.revision);assert.match(after.connectionFile,/next-\d+\.json$/);
 });
+
+test('durable pending intent CAS prevents stale cancel/late response across native processes',t=>{
+ const home=fixture(t),env={PI_CODING_AGENT_DIR:join(home,'persisted-agent')};
+ const first=createConfigPathStore(home,env),second=createConfigPathStore(home,env);
+ const original={intentId:randomUUID(),brokerUrl:'https://broker.example',requestId:null,selectionRevision:'empty'};
+ assert.equal(first.writePending(original),true);assert.deepEqual(second.readPending(),original);
+ const replacement={...original,intentId:randomUUID(),requestId:'new-request'};
+ assert.equal(second.writePending(replacement,original.intentId),true);
+ assert.equal(first.writePending({...original,requestId:'late'},original.intentId),false);
+ assert.equal(first.clearPending(original.intentId),false);assert.deepEqual(first.readPending(),replacement);
+ assert.equal(second.clearPending(replacement.intentId),true);assert.equal(first.readPending(),null);
+ assert.equal(first.read(),null);
+});
