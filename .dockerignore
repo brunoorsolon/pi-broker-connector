@@ -1,0 +1,5 @@
+node_modules
+.git
+.ci
+*.tgz
+**/__pycache__

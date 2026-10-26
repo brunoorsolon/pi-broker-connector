@@ -2,12 +2,12 @@
 
 A native Pi extension providing durable, session-bound messaging through the [Psst broker](https://github.com/matuto-ai/psst). Runs **inside the Pi process in your existing sandbox**. No host launcher, local model, provider subscription, or additional service is required by the connector.
 
-**Version 0.3.1:** native private setup, persistent installation selection and automatic reconnection of independent Pi sessions, retaining automatic native delivery and transport-auth pause protection. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
+**Version 0.4.0 (source candidate):** URL-only setup with administrator approval, persistent installation selection and automatic reconnection of independent Pi sessions, retaining automatic native delivery, transport-auth pause protection and the 0.3.1 keyboard fix. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
 
 ## Requirements
 
 - Node **24.19+ within major 24** and Pi **1.4.0** (the tested host version).
-- A reachable HTTPS Psst broker **0.3.0 with pairing enabled**, and one operator-approved **Pi-specific one-time pairing secret** per installation/scope. `/healthz` success or the broker URL alone does not authorize access. Existing connection bundles remain a compatibility option.
+- A reachable HTTPS Psst broker with the **administrator-approval API** enabled and an administrator able to approve this installation in the broker UI. `/healthz` success or the broker URL alone does not authorize access. Existing connection bundles remain a compatibility option.
 - Writable local persistent storage, not a shared/NFS directory. Preserve it across sandbox recreation if you want to resume the same Pi session.
 
 The connector vendors the broker's dependency-free client; it does not fetch broker code at runtime. Pi supplies `typebox` and its host API as peer dependencies.
@@ -33,38 +33,52 @@ This uses the default branch. To pin a reviewed commit, append `@` and its exact
 ### From npm (only after publication)
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.3.1
+pi install npm:@matuto-ai/pi-broker-connector@0.4.0
 ```
 
 The command requires the version to be present on npm. If publication is still pending, use a reviewed checkout instead.
 
-### Connect once inside Pi — no bundle to copy
+### Connect once inside Pi — just the URL
 
-After installing/updating, use `/reload` in the running Pi, then run
-`/psst-setup` **without arguments** inside Pi. It asks for the HTTPS broker
-URL, explicit authorization confirmation, then an operator-issued one-time secret
-in a focused **masked native field**. Never put that secret in the command, chat,
-a tool argument or ordinary Pi editor. The connector generates its own connection
-credential and keeps the generated files internal; you do not copy a bundle or
-ticket file into the sandbox. This requires a broker with scoped pairing enabled
-and an operator-approved grant for this installation/type/scope. A URL alone is
-not authorization. The initial operator grant and secure handoff remain necessary;
-this is not anonymous enrollment or a completed operator-provisioning UI.
+After installing/updating, use `/reload`, then `/psst-setup` **without arguments**.
+The native form has one text field: the HTTPS broker URL. There is no pairing
+secret to type, copy, distribute or place in a command. The connector generates
+and privately saves its candidate credential before requesting access. It returns
+to the editor while the administrator approves the exact request in the broker UI.
+A URL alone is not authorization: only that approval allows the connection.
 
-The nonsecret URL is remembered in Pi's agent directory. `PSST_BROKER_URL` is an
-optional explicit URL override; an origin mismatch fails instead of silently
-sending a saved credential elsewhere. After successful setup, new native sessions
-automatically use the saved credential, with independent session identities and
-mailboxes. No setup command, environment edit or re-enrollment is needed for each
-session sharing that persisted agent directory. Different project/profile mounts
-are different installations. Authentication failure or credential expiry never
-uses a leftover pairing secret to mint another identity; explicitly authorize a
-replacement when required. Repeating setup with a connected session asks for
-replacement confirmation and retains the old mailbox.
+When approved, Pi connects and remembers the installation. New native sessions
+sharing the persisted agent directory connect automatically, each with a separate
+session identity/mailbox. Ordinary startup never creates a request or rotates a
+credential. It may resume **status polling only** for a previously saved explicit
+pending request; reopening after approval requires no second setup. Transport
+polling does not call a model. Network failures retain the same request and key;
+missing/corrupt state never silently creates a replacement. Denied/expired/revoked
+requests stop and require explicit setup again.
 
-The memory-input helper is pinned to merged source in [broker PR20](https://github.com/matuto-ai/psst/pull/20). This does not deploy or enable pairing on your broker. Native input is interactive-only;
-RPC/headless contexts cannot fall back to secret text in chat. `/psst-connect` with
-an existing private file remains a compatibility option, not the new setup route.
+`/psst-disconnect` durably cancels only this native session's pending wait and
+stops its transport/delivery; it does not revoke credentials or cancel other
+sessions' shared installation request. A late approval cannot reconnect that
+locally disconnected session, even after reload. Shutdown preserves a pending wait for reopen.
+Explicit replacement asks for confirmation and leaves the previous working
+selection in place until approval and successful attachment. Concurrent selection
+changes are compare-and-swap protected. Old inbox data is never deleted or adopted
+by a new credential.
+
+The nonsecret URL, pending intent and selected bundle path are remembered in
+`${PI_CODING_AGENT_DIR:-~/.pi/agent}/psst/selection.sqlite`. Candidate credentials
+are private under the same agent directory's `psst/installation-credentials/`
+(or the explicit `PSST_STATE_DIR` installation location). Preserve this documented
+agent directory across container recreation; different project/profile mounts are
+not magically shared installations. `PSST_BROKER_URL` remains an optional URL
+override, never authorization; mismatched origins fail closed.
+
+The new broker API depends on [Psst PR22](https://github.com/matuto-ai/psst/pull/22),
+reviewed source commit `72f5d2d1b834e02cfb6b2f7dc11c6f1a55729344`. The vendored
+helper is byte-pinned in `APPROVAL_UPSTREAM.json`; this source dependency is not
+evidence of a merged, released or deployed broker API.
+Installing this connector does not deploy or enable that server API. Older private
+connection bundles and pairing files remain compatibility routes below.
 
 ### Compatibility: connect with an existing private file
 
@@ -79,7 +93,7 @@ Use the existing bundle path; keep its `token` next to `connection.json`. After 
 Install or update **inside the same sandbox**, then use `/reload` in the running Pi:
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.3.1
+pi install npm:@matuto-ai/pi-broker-connector@0.4.0
 ```
 
 This installer command is not a second agent session. No sandbox recreation or Pi process restart is required. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires 0.2.0 or later.
@@ -100,7 +114,7 @@ When an operator provides a private **pairing file**, use its path instead of an
 
 The extension recognizes `psst-pairing-v1`, generates a unique installation credential locally, saves retry state before contacting `/v1/enrollments`, and remembers the resulting ordinary connection bundle. The pairing secret is read only from the private file: never paste it into a command, prompt, URL, or model tool. No environment variable, new agent, or sandbox restart is needed. Existing connection bundles still work unchanged.
 
-New enrollment files live privately under the native agent directory's `psst/installation-credentials/`. Explicit `PSST_STATE_DIR` uses its `installations/` directory. Existing legacy file-pairing attempts retain their original retry directory. Uncertain responses reuse the same durable enrollment request and token when you repeat the command; they do not silently allocate another identity. An expired/revoked credential requires a newly approved secret through `/psst-setup` (or a new compatibility pairing file), never automatic credential minting. Pairing uses normal verified HTTPS; private-CA override is not currently supported by the shared pairing helper (legacy bundles still support their existing CA option).
+New enrollment files live privately under the native agent directory's `psst/installation-credentials/`. Explicit `PSST_STATE_DIR` uses its `installations/` directory. Existing legacy file-pairing attempts retain their original retry directory. Uncertain responses reuse the same durable enrollment request and token when you repeat the command; they do not silently allocate another identity. An expired/revoked credential requires explicit administrator-approved replacement through `/psst-setup` (or a new compatibility pairing file), never automatic credential minting. Pairing uses normal verified HTTPS; private-CA override is not currently supported by the shared pairing helper (legacy bundles still support their existing CA option).
 
 Each installation credential is separate from each native Pi session identity. The private enrollment receipt is verified against the broker, client type and token before it can bind local state. Reload of the same native session and enrollment resumes its mailbox; a fresh pairing credential creates a separate mailbox and retains old state rather than adopting it. Legacy bundles without an enrollment receipt retain their original session binding. Pairing completion after a session switch/shutdown cannot attach to the departed session.
 
@@ -244,3 +258,21 @@ acceptance is claimed. The broker checkout must include its enrollment TLS fixtu
 ### Masked-field keyboard regression tests
 
 `npm test` requires Python 3 on Linux for the real POSIX PTY keyboard tests. They use only synthetic input and the pinned official Pi TUI 1.4.0 development dependency. Runtime imports resolve through Pi’s native extension loader; no terminal keyboard mode is changed by the connector itself. Legacy text/paste and Kitty printable input are supported, while control keys use the public host decoder. This does not claim complete xterm `modifyOtherKeys` printable-key support.
+
+## Approval integration verification
+
+`npm run test:approval` requires `PI_TEST_INSTALL` (isolated official Pi1.4.0)
+and `PSST_TEST_SOURCE` (the reviewed broker source containing its TLS fixture).
+It runs the actual CLI in a PTY, real authenticated administrator form approval,
+HTTPS registration/message delivery and automatic native JSONL acceptance. It
+also covers approval while Pi is closed and 30 concurrent official SDK sessions
+sharing one credential without model calls on startup. Synthetic authority only;
+this does not use or verify an owner's production account or model inference.
+
+Set `PI_TEST_CONTAINER_IMAGE` to the image built from
+`test/containers/Containerfile` to execute the two PTY lifecycles in **separate
+removed containers** with only the documented agent directory retained. The
+runner needs Docker (or `PI_TEST_CONTAINER_ENGINE=podman`) and Linux host
+networking so disposable clients can reach the local verified-TLS fixture.
+No image is published, daemon socket mounted, or user's sandbox modified.
+Container execution is a distinct gate, not implied by process-only tests.
