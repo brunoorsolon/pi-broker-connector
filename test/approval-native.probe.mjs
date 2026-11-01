@@ -21,7 +21,7 @@ async function runScenario(t,deferApproval=false){
  const controlFile=join(f.directory,'native-control.json');writeFileSync(controlFile,JSON.stringify(control),{mode:0o600});
  const child=spawn('python3',['scripts/approval-native-pty.py',controlFile],{stdio:['ignore','pipe','pipe']});
  let peer,partial='',stderr='',events=[],work=Promise.resolve(),failure,selection,credential,firstRecipient,requestId;
- t.after(async()=>{if(child.exitCode===null){child.kill();await once(child,'exit');}await peer?.close();});
+ t.after(async()=>{if(child.exitCode===null&&child.signalCode===null){child.kill();await once(child,'exit');}await peer?.close();});
  child.stderr.on('data',b=>stderr+=b);
  child.stdout.on('data',buffer=>{
   partial+=buffer;const lines=partial.split('\n');partial=lines.pop();
@@ -39,14 +39,14 @@ async function runScenario(t,deferApproval=false){
     peer=new PiBrokerSession({config:{...config,name:'fixture peer'},hostSessionId:randomUUID(),currentSessionId:()=>peer.hostSessionId});await peer.start();
     const tools=createTools({client:peer.client,inbox:peer.inbox}),clients=(await tools.broker_list_clients()).clients;
     const recipient=clients.find(c=>c.client_id!==peer.inbox.identity.client_id);assert.ok(recipient);firstRecipient=recipient.client_id;
-    const sent=await tools.broker_send({recipient_id:recipient.client_id,text:marker+(deferApproval?'-reopened':''),send_key:'fixture-native-approval'});assert.ok(sent.message_id);
+    const sent=await tools.broker_send({recipient_id:recipient.client_id,text:marker+(deferApproval?'-reopened':'')});assert.ok(sent.message_id);
    }
    if(event.event==='recreated_connected'&&!deferApproval){
     assert.deepEqual(createConfigPathStore(f.directory,{PI_CODING_AGENT_DIR:agent}).snapshot(),selection);
     assert.equal(f.approval.list().length,1);
     const tools=createTools({client:peer.client,inbox:peer.inbox}),clients=(await tools.broker_list_clients()).clients;
     const recipient=clients.find(c=>c.client_id!==peer.inbox.identity.client_id&&c.client_id!==firstRecipient);assert.ok(recipient);
-    const sent=await tools.broker_send({recipient_id:recipient.client_id,text:marker+'-reopened',send_key:'fixture-reopened'});assert.ok(sent.message_id);
+    const sent=await tools.broker_send({recipient_id:recipient.client_id,text:marker+'-reopened'});assert.ok(sent.message_id);
    }
   }).catch(error=>{failure=error;child.kill();});
  });

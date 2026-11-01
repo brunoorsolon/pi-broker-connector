@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, statSync, chmodSync, symlinkSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { CONNECTOR_VERSION } from '../src/runtime-support.mjs';
 import { installExtension } from '../src/extension.mjs';
 import { createConfigPathStore } from '../src/config-path.mjs';
 import { PiBrokerSession } from '../src/session.mjs';
@@ -43,8 +44,8 @@ test('TXT rejects multiline/relative/public/symlink; explicit env keeps preceden
  f.env.PSST_CONFIG_FILE=f.file;const host=f.load();await host.events.session_start({},f.ctx);assert.equal(f.active,1);await host.events.session_shutdown();
 });
 
-test('disconnect survives reload until explicit reconnect; manual mode survives reconnect',async t=>{
- const f=fixture(t);let host=f.load();await host.commands['psst-connect'].handler(f.file,f.ctx);
+test('diagnostic disconnect survives reload until explicit reconnect; manual mode survives reconnect',async t=>{
+ const f=fixture(t);f.env.PSST_DIAGNOSTIC_MANUAL='1';let host=f.load();await host.commands['psst-connect'].handler(f.file,f.ctx);
  await host.commands['psst-mode'].handler('manual',f.ctx);
  await host.commands['psst-disconnect'].handler('',f.ctx);assert.equal(f.active,0);
  await host.events.session_shutdown();host=f.load();await host.events.session_start({},f.ctx);assert.equal(f.active,0);
@@ -205,4 +206,95 @@ test('newer cross-process intent during old registration prevents stale promotio
  const task=host.commands['psst-setup'].handler('',f.ctx);await waiting;const old=f.pathStore.readPending();
  const next={...old,intentId:'next-explicit-intent',requestId:'next-explicit-request'};assert.equal(f.pathStore.writePending(next,old.intentId),true);
  release();await task;assert.equal(f.pathStore.read(),null);assert.deepEqual(f.pathStore.readPending(),next);assert.ok(f.notices.some(n=>n.includes('superseded')));await host.events.session_shutdown();
+});
+
+test('bare connect without a saved connection guides setup/status without creating state',async t=>{
+ const f=fixture(t);let reads=0;const host=f.load({pathStore:{read:()=>null,snapshot(){reads++;throw Error('must not inspect absent selection');}}});
+ await host.commands['psst-connect'].handler('',f.ctx);assert.equal(reads,0);assert.equal(f.active,0);
+ assert.match(f.notices.at(-1),/psst-setup.*psst-status/);assert.equal(f.notices.at(-1).includes('invalid_configuration'),false);
+});
+test('setup reports sanitized failing phase and status retains last diagnostic',async t=>{
+ const f=fixture(t),secret='fixture-secret-private';
+ const host=f.load({setupUI:async(_ctx,{onPhase})=>{onPhase('url_validation');throw Object.assign(Error(secret),{code:'broker_origin_mismatch'});}});
+ await host.commands['psst-setup'].handler('',f.ctx);
+ assert.match(f.notices.at(-1),/broker_origin_mismatch; phase=url_validation; request=not_started/);
+ await host.commands['psst-status'].handler('',f.ctx);
+ assert.ok(f.notices.filter(n=>n.includes('phase=url_validation')).length>=2);
+ assert.ok(f.notices.some(n=>n.includes(`connector ${CONNECTOR_VERSION}`)));assert.ok(f.notices.every(n=>!n.includes(secret)));
+ assert.equal(f.pathStore.readPending(),null);
+});
+test('failed request after intent save reports unknown outcome, preserving exact pending intent',async t=>{
+ const f=fixture(t);const host=f.load({setupUI:async(_ctx,{beforeBegin,onPhase})=>{await beforeBegin({brokerUrl:'https://broker.example'});onPhase('enrollment_request');throw Object.assign(Error('raw body must not leak'),{code:'invalid_response'});}});
+ await host.commands['psst-setup'].handler('',f.ctx);assert.ok(f.pathStore.readPending().intentId);
+ assert.match(f.notices.at(-1),/invalid_response; phase=enrollment_request; request=outcome_unknown/);
+ assert.equal(f.pathStore.read(),null);assert.ok(f.notices.every(n=>!n.includes('raw body')));
+});
+test('invalid storage does not prevent registration of read-only doctor and diagnostic commands',async t=>{
+ const f=fixture(t),root=join(f.home,'unsafe-agent','psst');mkdirSync(root,{recursive:true,mode:0o700});
+ writeFileSync(join(root,'selection.sqlite'),'private-not-sqlite',{mode:0o600});
+ const env={PI_CODING_AGENT_DIR:join(f.home,'unsafe-agent')};const host=f.load({env,pathStore:null});
+ await host.commands['psst-doctor'].handler('',f.ctx);assert.match(f.notices.at(-1),/selection_file=ok/);
+ await host.commands['psst-setup'].handler('',f.ctx);assert.match(f.notices.at(-1),/phase=selection_read; request=not_started/);
+ assert.equal(readFileSync(join(root,'selection.sqlite'),'utf8'),'private-not-sqlite');
+});
+
+
+test('production tools are automatic-only; legacy manual selection cannot silently disable native delivery',async t=>{
+ const f=fixture(t);f.env.PSST_DIAGNOSTIC_MANUAL='1';let host=f.load();
+ assert.ok(host.commands['psst-mode']);assert.ok(host.tools.broker_receive);assert.ok(host.tools.broker_acknowledge);
+ await host.commands['psst-connect'].handler(f.file,f.ctx);await host.commands['psst-mode'].handler('manual',f.ctx);
+ await host.events.session_shutdown();delete f.env.PSST_DIAGNOSTIC_MANUAL;host=f.load();
+ assert.equal(host.commands['psst-mode'],undefined);assert.equal(host.tools.broker_receive,undefined);assert.equal(host.tools.broker_acknowledge,undefined);
+ await host.events.session_start({},f.ctx);
+ const identity=await host.tools.broker_identity.execute('id',{},undefined,undefined,f.ctx);assert.equal(identity.details.local_mode,'native_auto');
+ assert.equal(f.instances.at(-1).inbox.db.prepare("SELECT value FROM pi_delivery_settings WHERE key='mode'").get().value,'manual','migration changes behavior, not stored inbox state');
+ await host.commands['psst-disconnect'].handler('',f.ctx);await host.events.session_shutdown();host=f.load();await host.events.session_start({},f.ctx);assert.equal(f.active,0,'disconnect still hard-stops on reload');
+ await host.events.session_shutdown();
+});
+
+test('only exact explicit diagnostic flag exposes cooperative tools; production never creates their receipt table',async t=>{
+ for(const value of [undefined,'','0','true']){
+  const f=fixture(t);if(value!==undefined)f.env.PSST_DIAGNOSTIC_MANUAL=value;const host=f.load();
+  assert.equal(host.tools.broker_receive,undefined);assert.equal(host.tools.broker_acknowledge,undefined);assert.equal(host.commands['psst-mode'],undefined);
+  await host.commands['psst-connect'].handler(f.file,f.ctx);
+  assert.equal(f.instances.at(-1).inbox.db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name='cooperative_receipts'").get().n,0);
+  await host.events.session_shutdown();
+ }
+});
+
+
+test('bare connect resumes saved credential/mailbox after explicit disconnect without enrollment or selection replacement',async t=>{
+ const f=fixture(t);let approvalCalls=0;const forbidden=()=>{approvalCalls++;throw Error('no enrollment permitted');};
+ const overrides={approvalClient:{readApprovalState:forbidden,beginApproval:forbidden,pollApproval:forbidden},setupUI:forbidden,connectionResolver:async file=>file};
+ let host=f.load(overrides);await host.commands['psst-connect'].handler(f.file,f.ctx);const identity=f.instances.at(-1).inbox.identity.client_id,saved=f.pathStore.snapshot();
+ await host.commands['psst-disconnect'].handler('',f.ctx);await host.events.session_shutdown();host=f.load(overrides);await host.events.session_start({},f.ctx);assert.equal(f.active,0);
+ await host.commands['psst-connect'].handler('',f.ctx);assert.equal(f.active,1);assert.equal(f.instances.at(-1).inbox.identity.client_id,identity);assert.deepEqual(f.pathStore.snapshot(),saved);assert.equal(approvalCalls,0);
+ const instances=f.instances.length;await host.commands['psst-connect'].handler('',f.ctx);assert.equal(f.instances.length,instances,'already connected is a no-op');assert.equal(approvalCalls,0);
+ await host.events.session_shutdown();
+});
+
+test('bare connect invalid or expired saved selection preserves selection, stop flag and pending intent',async t=>{
+ for(const code of ['invalid_configuration','credential_expired']){
+  const f=fixture(t);f.pathStore.write(f.file,'https://broker.example');f.pathStore.setDisconnected('native-A',true);const saved=f.pathStore.snapshot();
+  let enrollments=0;const host=f.load({configReader:()=>{throw Object.assign(Error('private raw path must not appear'),{code});},approvalClient:{beginApproval(){enrollments++;}}});
+  await host.commands['psst-connect'].handler('',f.ctx);assert.deepEqual(f.pathStore.snapshot(),saved);assert.equal(f.pathStore.isDisconnected('native-A'),true);assert.equal(f.active,0);assert.equal(enrollments,0);assert.ok(f.notices.some(n=>n.includes('psst-doctor')));assert.ok(f.notices.every(n=>!n.includes('private raw path')));
+ }
+});
+
+test('shutdown during bare reconnect cannot attach late or replace the saved selection',async t=>{
+ const f=fixture(t);f.pathStore.write(f.file,'https://broker.example');const saved=f.pathStore.snapshot();let release,entered;const started=new Promise(resolve=>entered=resolve),gate=new Promise(resolve=>release=resolve);
+ const host=f.load({createSession:options=>{const session=new PiBrokerSession(options);session.start=async()=>{entered();await gate;};return session;},setupUI:()=>{throw Error('must not setup');}});
+ const connecting=host.commands['psst-connect'].handler('',f.ctx);await started;const stopping=host.events.session_shutdown();release();await Promise.all([connecting,stopping]);
+ assert.deepEqual(f.pathStore.snapshot(),saved);assert.ok(f.notices.every(n=>!n.includes('Psst reconnected')));
+ const result=await host.tools.broker_identity.execute('identity',{},undefined,undefined,f.ctx);assert.equal(result.details.error.code,'session_mismatch');
+});
+
+
+test('bare connect retries a paused transport instead of claiming an already healthy connection',async t=>{
+ const f=fixture(t);let enrollments=0;const host=f.load({setupUI:()=>{enrollments++;throw Error('no enrollment');}});
+ await host.commands['psst-connect'].handler(f.file,f.ctx);const first=f.instances.at(-1),id=first.inbox.identity.client_id,saved=f.pathStore.snapshot();
+ first.runtime.handleTransportError({code:'unauthenticated'});assert.equal(first.runtime.paused,true);assert.equal(first.isAlive(),true);
+ const before=f.instances.length;await host.commands['psst-connect'].handler('',f.ctx);
+ assert.equal(f.instances.length,before+1);assert.equal(f.instances.at(-1).inbox.identity.client_id,id);assert.equal(f.instances.at(-1).deliveryAllowed(),true);assert.deepEqual(f.pathStore.snapshot(),saved);assert.equal(enrollments,0);assert.match(f.notices.at(-1),/reconnected/);
+ await host.events.session_shutdown();
 });

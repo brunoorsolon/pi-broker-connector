@@ -44,7 +44,7 @@ def cycle(first):
    try:
     for envelope,native_receipt in connection.execute("SELECT envelope,native_receipt FROM inbox WHERE native_receipt LIKE 'pi:%'"):
      if json.loads(envelope)['content']['text']==marker:receipt=True
-    assert connection.execute('SELECT count(*) FROM cooperative_receipts').fetchone()[0]==0,'automatic delivery fabricated explicit-read receipt'
+    assert connection.execute("SELECT count(*) FROM sqlite_master WHERE name='cooperative_receipts'").fetchone()[0]==0,'production delivery exposed a cooperative receipt table'
    finally:connection.close()
   if not receipt:return False
   for file in agent.glob('sessions/**/*.jsonl'):

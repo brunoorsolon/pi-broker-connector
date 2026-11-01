@@ -1,6 +1,27 @@
 # Changelog
 
-## 0.4.0 — prepared, not released
+## 0.5.0 — unreleased source candidate
+
+### Setup and session metadata
+
+- Surface sanitized setup phase/error/request-state diagnostics and read-only `/psst-doctor` path checks without resetting credentials or weakening storage permissions.
+- Guard unsupported Node versions before loading the SQLite-backed adapter; report the loaded package/runtime and clarify bare `/psst-connect` and upgrade/reload guidance.
+- Show native names with stable short identifiers, project basenames and actual provider/model metadata; update labels without changing identity, credentials or inboxes.
+
+### Compact native message presentation
+
+- Show origin, exact sender/message IDs and escaped text without repeated policy paragraphs, null metadata or redundant MIME labels; wire validation and native role are unchanged.
+- Version durable native handoffs so pre-upgrade receipt reconciliation retains the exact legacy format without duplicate delivery.
+
+### Native message operations and automatic-only delivery
+
+- Add metadata-only sent history (default 10), owned content-by-ID, explicit resend and truthful cancellation through the shared broker API.
+- Keep operation identity/timestamps internal and durable using the original native tool-call entry; recover bounded pending work after reconnect without replacing unknown operations or semantically deduplicating new sends.
+- Hide cooperative receive/ACK tools and manual-mode commands in production; retain them only behind explicit `PSST_DIAGNOSTIC_MANUAL=1` for isolated tests/diagnosis.
+- Treat legacy manual delivery preferences as automatic in production without changing identities or replaying uncertain/consumed handoffs. Explicit disconnect and transport/native-ownership gates remain hard stops.
+- Feature-gate graceful broker disconnect on normal shutdown while retaining identity, unread inboxes and queued offline mail for exact-session resume. Older brokers retain lease-expiry fallback; native prolonged-offline notice presentation remains pending.
+
+## 0.4.0
 
 - Replace primary secret-entry setup with one native URL field and administrator-approved access requests.
 - Persist explicit pending intent before network effects; reopen resumes status checks without creating credentials.

@@ -8,7 +8,7 @@ import { ApiError, canonical, validateMetadata, validateRegistration, validateMe
 import { LocalError } from './errors.mjs';
 
 const ALLOWED_ERROR_CODES = new Set(['invalid_request', 'unauthenticated', 'forbidden', 'recipient_not_found',
-  'message_not_found', 'identity_conflict', 'stale_lease_epoch', 'idempotency_conflict', 'metadata_conflict',
+  'message_not_found', 'history_changed', 'content_unavailable', 'retry_window_elapsed', 'identity_conflict', 'stale_lease_epoch', 'idempotency_conflict', 'metadata_conflict',
   'claim_conflict', 'session_closed', 'message_expired', 'payload_too_large',
   'incompatible_receiver_transport', 'receiving_disabled', 'rate_limited', 'mailbox_full',
   'storage_unavailable', 'not_ready']);
@@ -95,12 +95,13 @@ export class BrokerClient {
     return token;
   }
 
-  async request(method, path, { body, key, session = true, signal, idempotent = false, deadline = Infinity } = {}) {
+  async request(method, path, { body, key, session = true, signal, idempotent = false, deadline = Infinity, onError = () => {} } = {}) {
     if (!/^\/v1\/[A-Za-z0-9_/?=&.%+~-]+$/.test(path)) throw new LocalError('invalid_configuration');
     for (let attempt = 0; ; attempt++) {
       if (this.now() >= deadline) throw new LocalError('retry_window_elapsed', { effect: 'unknown' });
       try { return await this.requestOnce(method, path, { body, key, session, signal, timeoutMs: Math.min(this.requestTimeoutMs, deadline - this.now()) }); }
       catch (error) {
+        onError(error);
         if (signal?.aborted) throw new LocalError('request_aborted', { effect: 'unknown' });
         const retryable = error instanceof BrokerError ? error.retryable
           : error instanceof LocalError && error.code === 'request_failed';
@@ -155,6 +156,7 @@ export class BrokerClient {
               const retryAfter = /^\d+$/.test(String(response.headers['retry-after'] ?? '')) ? Math.min(3600, Number(response.headers['retry-after'])) : 0;
               finish(new BrokerError(status, value, retryAfter)); return;
             }
+            if(['true','false'].includes(response.headers['idempotency-replayed']))value.acceptance_replayed=response.headers['idempotency-replayed']==='true';
             const timestamp = value?.server_time;
             // Registration/send/completion retries may return their original
             // stored result. Historical server_time is not a current clock sample.
@@ -240,6 +242,21 @@ export class BrokerClient {
     return this.request('POST', `/v1/sessions/${this.identity.client_id}/close`, { body: {}, idempotent: true, signal });
   }
 
+  async disconnectSession({ signal } = {}) {
+    return this.request('POST', `/v1/sessions/${this.identity.client_id}/disconnect`, { body: {}, idempotent: true, signal });
+  }
+
+  async presenceEvents(filters = {}, { signal } = {}) {
+    if (Object.keys(filters).some(key => !['limit', 'cursor'].includes(key))) throw new LocalError('invalid_configuration');
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) query.set(key, String(value));
+    return this.request('GET', `/v1/presence-events${query.size ? `?${query}` : ''}`, { idempotent: true, signal });
+  }
+
+  async acknowledgePresenceEvent(eventId, { signal } = {}) {
+    return this.request('POST', `/v1/presence-events/${validateUuid(eventId)}/ack`, { body: {}, idempotent: true, signal });
+  }
+
   async listClients(filters = {}, { signal } = {}) {
     const allowed = ['connected', 'client_type', 'name', 'project', 'limit', 'cursor'];
     if (Object.keys(filters).some(key => !allowed.includes(key))) throw new LocalError('invalid_configuration');
@@ -269,23 +286,96 @@ export class BrokerClient {
     return metadata;
   }
 
-  prepareSend(request, options = {}) {
-    return this.inbox.prepareSend(request, { retryWindowSeconds: positiveSeconds(this.policy.send_retry_seconds, 86400), ...options });
+  operationOptions(options = {}) {
+    const {operationStartedAt,...rest}=options,seconds=positiveSeconds(this.policy.send_retry_seconds,86400);
+    if(operationStartedAt!==undefined&&(!Number.isSafeInteger(operationStartedAt)||operationStartedAt>this.now()+300000||this.now()-operationStartedAt>=seconds*1000))throw new LocalError('retry_window_elapsed',{effect:'unknown'});
+    return {retryWindowSeconds:seconds,issuedAt:Math.trunc((operationStartedAt??this.now())+this.clockOffset),...(operationStartedAt===undefined?{}:{retryUntil:operationStartedAt+seconds*1000}),...rest};
   }
 
-  async sendPrepared(key, { signal } = {}) {
-    const operation = this.inbox.outgoing(key);
-    if (!operation) throw new LocalError('invalid_configuration');
-    if (operation.result) return { ...operation.result, send_key: key };
-    const result = await this.request('POST', '/v1/messages', { body: operation.request, key, idempotent: true,
-      deadline: operation.retry_until, signal });
-    try { validateUuid(result?.message_id); } catch { throw new LocalError('invalid_response', { effect: 'unknown' }); }
-    this.inbox.recordSendResult(key, result);
-    if (operation.request.metadata_patch) {
-      this.inbox.setState('metadata', { ...this.inbox.getState('metadata'), ...operation.request.metadata_patch });
-      // Sender revision is not guessed; reconcile from owned state before a future CAS mutation.
+  prepareSend(request, options = {}) {
+    return this.inbox.prepareSend(request,this.operationOptions(options));
+  }
+
+  async sendPrepared(key, options = {}) { return this.outgoingRequest(key,'send',options); }
+
+  prepareResend(messageId, input = {}, options = {}) {
+    return this.inbox.prepareResend(messageId,input,this.operationOptions(options));
+  }
+
+  async resendPrepared(key, options = {}) { return this.outgoingRequest(key,'resend',options); }
+
+  async outgoingRequest(key, kind, options) {
+    // Shared by clients using this exact journal: concurrent invocations cannot
+    // race a definite rejection against another still-running network attempt.
+    const inflight=this.inbox.outgoingRequests??=new Map();
+    if(inflight.has(key))return inflight.get(key);
+    const work=this.transmitOutgoing(key,kind,options);inflight.set(key,work);
+    try{return await work;}finally{inflight.delete(key);}
+  }
+
+  async transmitOutgoing(key, kind, { signal } = {}) {
+    const operation=this.inbox.outgoing(key);
+    if(!operation||operation.kind!==kind)throw new LocalError('invalid_configuration');
+    if(operation.result)return {...operation.result,acceptance_replayed:true,send_key:key};
+    if(operation.failure)throw new BrokerError(operation.failure.status,operation.failure.value);
+    let priorUnknown=!!operation.uncertain;
+    try{this.inbox.markOutgoingAttempt(key);}catch(error){
+      if(priorUnknown)throw new LocalError('storage_unavailable',{effect:'unknown'});
+      throw error; // a wholly new operation has not reached the network
+    } // crash before/after HTTP stays uncertain
+    const body=kind==='send'?operation.request:Object.fromEntries(Object.entries(operation.request).filter(([k])=>k!=='message_id'));
+    const path=kind==='send'?'/v1/messages':`/v1/messages/${validateUuid(operation.request.message_id)}/resend`;
+    let result;
+    try{
+      result=await this.request('POST',path,{body,key,idempotent:true,deadline:operation.retry_until,signal,onError:error=>{if(error.effect!=='not_applied')priorUnknown=true;}});
+    }catch(error){
+      // A rejection of a later retry is not evidence that an earlier unknown
+      // attempt was rejected. Only a first, wholly known-not-applied operation
+      // may become a durable terminal failure; other intents remain independent.
+      if(!priorUnknown&&error instanceof BrokerError&&error.effect==='not_applied'&&!error.retryable)this.inbox.recordSendFailure(key,{status:error.status,value:error.toJSON()});
+      throw error;
     }
-    return { ...result, send_key: key };
+    try{validateUuid(result?.message_id);}catch{throw new LocalError('invalid_response',{effect:'unknown'});}
+    try{
+      this.inbox.recordSendResult(key,result);
+      if(kind==='send'&&operation.request.metadata_patch)this.inbox.setState('metadata',{...this.inbox.getState('metadata'),...operation.request.metadata_patch});
+    }catch{
+      // The broker already accepted this operation. A failed local result or
+      // metadata commit describes only the journal, never remote non-delivery.
+      throw new LocalError('storage_unavailable',{effect:'unknown'});
+    }
+    return {...result,send_key:key};
+  }
+
+  async cancelMessage(messageId, { signal } = {}) {
+    return this.request('POST',`/v1/messages/${validateUuid(messageId)}/cancel`,{body:{},idempotent:true,signal});
+  }
+
+  async recoverOutgoing({ limit = 10, signal } = {}) {
+    if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw new LocalError('invalid_configuration');
+    const records=[];
+    const {operations,expiredCount}=this.inbox.outgoingRecovery(limit,this.now());
+    for(const operation of operations){
+      try{
+        const pending=this.inbox.outgoing(operation.key);
+        const value=await (pending.kind==='resend'?this.resendPrepared(operation.key,{signal}):this.sendPrepared(operation.key,{signal}));
+        const {send_key,...result}=value;records.push({operation:pending.kind,result});
+      }catch(error){records.push({error:error instanceof LocalError||error instanceof BrokerError?error.toJSON().error:new LocalError('request_failed',{effect:'unknown'}).toJSON().error});}
+    }
+    if(expiredCount)records.push({...new LocalError('retry_window_elapsed',{effect:'unknown'}).toJSON(),count:expiredCount});
+    return records;
+  }
+
+  async sentHistory(filters = {}, { signal } = {}) {
+    const allowed=['recipient_id','status','accepted_after','accepted_before','limit','cursor'];
+    if(!filters||typeof filters!=='object'||Array.isArray(filters)||Object.keys(filters).some(key=>!allowed.includes(key))) throw new LocalError('invalid_configuration');
+    const query=new URLSearchParams();
+    for(const [key,value] of Object.entries(filters)) query.set(key,String(value));
+    return this.request('GET',`/v1/messages${query.size?`?${query}`:''}`,{idempotent:true,signal});
+  }
+
+  async messageContent(messageId, { signal } = {}) {
+    return this.request('GET',`/v1/messages/${validateUuid(messageId)}/content`,{idempotent:true,signal});
   }
 
   async messageStatus(messageId, { signal } = {}) {

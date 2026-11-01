@@ -13,7 +13,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: matuto-ai/psst
-          ref: 72f5d2d1b834e02cfb6b2f7dc11c6f1a55729344
+          ref: 2a21c0c332cab0570e9a54aa0e7e0be41e1d9eba
           path: .ci/psst
       - uses: actions/setup-node@v6
         with:

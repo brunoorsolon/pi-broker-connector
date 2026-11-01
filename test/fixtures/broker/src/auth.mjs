@@ -4,8 +4,8 @@ import { ApiError, TYPES } from './protocol.mjs';
 
 /** Operator-owned verifier file. Empty means deny-all, never authentication bypass. */
 export class CredentialStore {
-  constructor({ path, onRevoke = () => {}, onPolicyChange = () => {}, clock = Date.now }) {
-    this.path=path;this.onRevoke=onRevoke;this.onPolicyChange=onPolicyChange;this.clock=clock;this.entries=[];this.serial=null;
+  constructor({ path, onRevoke = () => {}, onPolicyChange = () => {}, clock = Date.now, additionalCredentials = () => [] }) {
+    this.additionalCredentials=additionalCredentials;this.path=path;this.onRevoke=onRevoke;this.onPolicyChange=onPolicyChange;this.clock=clock;this.entries=[];this.serial=null;
     this.reload();
   }
   reload() {
@@ -18,6 +18,7 @@ export class CredentialStore {
       }finally{closeSync(fd);}
       const value=JSON.parse(raw);
       if(!value||Object.keys(value).some(k=>k!=='credentials')||!Array.isArray(value.credentials)||value.credentials.length>1000) throw new Error('Invalid credential configuration.');
+      value.credentials.push(...this.additionalCredentials());
       const seen=new Set(),hashes=new Set();
       for(const c of value.credentials){
         const keys=['credential_id','token_sha256','principal_id','adapter_id','client_types','scopes','expires_at','revoked'];
@@ -30,6 +31,7 @@ export class CredentialStore {
         if(c.revoked!==undefined&&typeof c.revoked!=='boolean')throw new Error('Invalid revocation flag.');
         seen.add(c.credential_id);hashes.add(c.token_sha256);
       }
+      this.configuredEntries=value.credentials; // includes revoked/expired hashes for issuance collision checks
       const active=value.credentials.filter(c=>!c.revoked&&(c.expires_at===undefined||Date.parse(c.expires_at)>this.clock()));
       const revoked=this.entries.filter(c=>!active.some(n=>JSON.stringify(n)===JSON.stringify(c))).map(c=>c.credential_id);
       if(revoked.length)this.onRevoke(revoked);

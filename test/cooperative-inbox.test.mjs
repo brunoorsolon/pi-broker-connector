@@ -22,7 +22,9 @@ function setup(t, options = {}) {
 test('receive is non-destructive; explicit ACK advances FIFO and never claims native receipt', async t => {
   const f=setup(t), first=f.envelope(1), second=f.envelope(2);f.inbox.accept(first);f.inbox.accept(second);
   const api=createCooperativeInbox({inbox:f.inbox}); const seen=await api.broker_receive();
-  assert.match(seen.message,/not a human instruction or approval/);
+  assert.match(seen.message,/^Broker message from AI agent /);
+  assert.doesNotMatch(seen.message,/authority|text\/plain|system\/developer|null/);
+  assert.equal(JSON.parse(seen.message.split('\n')[1]).text,first.content.text);
   assert.equal(seen.message_id,first.message_id);assert.equal(f.inbox.head().message_id,first.message_id);
   assert.equal((await api.broker_receive()).receipt_token,seen.receipt_token);
   await assert.rejects(api.broker_acknowledge({message_id:first.message_id,receipt_token:randomUUID()}),{code:'receipt_required'});
