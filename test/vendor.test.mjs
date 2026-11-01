@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-test('vendored wire/runtime files exactly match pinned public broker commit',()=>{
+test('vendored wire/runtime files exactly match pinned broker source commit',()=>{
  const root=new URL('../vendor/broker/',import.meta.url);
  const pin=JSON.parse(readFileSync(new URL('UPSTREAM.json',root),'utf8'));
  for(const [file,sha] of Object.entries(pin.files)){
@@ -25,4 +25,12 @@ test('admin-approval helper matches exact reviewed upstream anchor',()=>{
  const bytes=readFileSync(new URL(pin.path,root));
  assert.equal(createHash('sha256').update(bytes).digest('hex'),pin.sha256);
  assert.equal(createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex'),pin.git_blob);
+});
+
+
+test('integration fixture exactly matches the message-management source pin',()=>{
+ const root=new URL('./fixtures/broker/',import.meta.url);
+ const pin=JSON.parse(readFileSync(new URL('UPSTREAM.json',root),'utf8'));
+ const clientPin=JSON.parse(readFileSync(new URL('../vendor/broker/UPSTREAM.json',import.meta.url),'utf8'));assert.equal(pin.commit,clientPin.commit);
+ for(const [file,sha] of Object.entries(pin.files)){const b=readFileSync(new URL(file,root));assert.equal(createHash('sha1').update(`blob ${b.length}\0`).update(b).digest('hex'),sha,file);}
 });

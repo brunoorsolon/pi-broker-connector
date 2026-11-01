@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, lstatSync, statfsSync, readdirSync, chmodSync, realpathSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { canonical, digest, validateEnvelope, validateUuid, validateSend, validateIdempotencyKey, TYPES } from '../src/protocol.mjs';
+import { canonical, digest, validateEnvelope, validateUuid, validateSend, validateIdempotencyKey, validateResend, TYPES } from '../src/protocol.mjs';
 import { LocalError } from './errors.mjs';
 
 export function newSessionIdentity(clientType) {
@@ -68,6 +68,12 @@ export class Inbox {
           key TEXT PRIMARY KEY, digest TEXT NOT NULL, request TEXT NOT NULL,
           created_at INTEGER NOT NULL, retry_until INTEGER NOT NULL, result TEXT);
         PRAGMA user_version=1;`);
+      if(!this.db.prepare('PRAGMA table_info(outgoing)').all().some(c=>c.name==='kind'))this.db.exec("ALTER TABLE outgoing ADD COLUMN kind TEXT NOT NULL DEFAULT 'send'");
+      for(const [name,type] of [['failure','TEXT'],['uncertain','INTEGER NOT NULL DEFAULT 0'],['operation_id','TEXT']]){
+        if(!this.db.prepare('PRAGMA table_info(outgoing)').all().some(c=>c.name===name))this.db.exec(`ALTER TABLE outgoing ADD COLUMN ${name} ${type}`);
+      }
+      this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS outgoing_operation ON outgoing(operation_id) WHERE operation_id IS NOT NULL');
+      this.db.exec('CREATE INDEX IF NOT EXISTS outgoing_recovery ON outgoing(retry_until,created_at,key) WHERE result IS NULL AND failure IS NULL');
       const stored = this.getState('identity');
       if (stored && canonical(stored) !== canonical(this.identity)) throw new LocalError('session_mismatch');
       if (!stored) this.setState('identity', this.identity);
@@ -234,33 +240,62 @@ export class Inbox {
     });
   }
 
-  prepareSend(rawRequest, { key = randomUUID(), retryWindowSeconds = 86400 } = {}) {
-    key = validateIdempotencyKey(key);
-    const request = validateSend(rawRequest);
+  prepareSend(rawRequest, options = {}) {
+    return this.prepareOperation('send',validateSend(rawRequest),options);
+  }
+
+  prepareResend(messageId, input = {}, options = {}) {
+    const validated=validateResend(input);
+    return this.prepareOperation('resend',{message_id:validateUuid(messageId),...(input.ttl_seconds===undefined?{}:validated)},options);
+  }
+
+  prepareOperation(kind, request, { key, operationId, issuedAt=this.now(), retryUntil, retryWindowSeconds = 86400 } = {}) {
+    if(operationId!==undefined&&(typeof operationId!=='string'||!/^[a-f0-9]{64}$/.test(operationId)))throw new LocalError('invalid_configuration');
+    const mapped=operationId?this.outgoingForOperation(operationId):null;
+    key = validateIdempotencyKey(key??mapped?.key??`op_${issuedAt}_${randomUUID().replaceAll('-','')}`);
     const encoded = canonical(request);
     const hash = digest(request);
     const existing = this.outgoing(key);
     if (existing) {
-      if (existing.digest !== hash) throw new LocalError('send_conflict');
+      if (existing.digest !== hash || existing.kind !== kind) throw new LocalError('send_conflict');
       return key;
     }
+    const started=/^op_([0-9]{13})_/.exec(key);
+    if(started&&issuedAt-Number(started[1])>=retryWindowSeconds*1000)throw new LocalError('retry_window_elapsed',{effect:'unknown'});
+    if(retryUntil!==undefined&&(!Number.isSafeInteger(retryUntil)||retryUntil<=this.now()))throw new LocalError('retry_window_elapsed',{effect:'unknown'});
     if (!Number.isSafeInteger(retryWindowSeconds) || retryWindowSeconds < 1) throw new LocalError('invalid_configuration');
     this.transaction(() => {
+      this.db.prepare('DELETE FROM outgoing WHERE key IN (SELECT key FROM outgoing WHERE (result IS NOT NULL OR failure IS NOT NULL) AND retry_until<? LIMIT 100)').run(this.now());
       if (this.db.prepare('SELECT COUNT(*) AS n FROM outgoing').get().n >= this.limits.maxOutgoingCount) throw new LocalError('inbox_full');
-      this.db.prepare('INSERT INTO outgoing(key,digest,request,created_at,retry_until) VALUES(?,?,?,?,?)').run(key, hash, encoded, this.now(), this.now() + retryWindowSeconds * 1000);
+      this.db.prepare('INSERT INTO outgoing(key,digest,request,created_at,retry_until,kind,operation_id) VALUES(?,?,?,?,?,?,?)').run(key, hash, encoded, this.now(), Math.min(retryUntil??Infinity,this.now()+retryWindowSeconds*1000),kind,operationId??null);
     }, { growth: Buffer.byteLength(encoded) * 3 + 8192 });
     return key;
+  }
+
+  outgoingForOperation(operationId) {
+    const row=this.db.prepare('SELECT key FROM outgoing WHERE operation_id=?').get(operationId);
+    return row?this.outgoing(row.key):null;
   }
 
   outgoing(key) {
     this.assertUsable();
     const row = this.db.prepare('SELECT * FROM outgoing WHERE key=?').get(key);
-    return row ? { ...row, request: JSON.parse(row.request), result: row.result ? JSON.parse(row.result) : null } : null;
+    return row ? { ...row, request: JSON.parse(row.request), result: row.result ? JSON.parse(row.result) : null, failure: row.failure ? JSON.parse(row.failure) : null } : null;
   }
 
   unresolvedSends() {
     this.assertUsable();
-    return this.db.prepare('SELECT key,created_at,retry_until FROM outgoing WHERE result IS NULL ORDER BY created_at LIMIT 100').all().map(row => ({ ...row }));
+    return this.db.prepare('SELECT key,created_at,retry_until FROM outgoing WHERE result IS NULL AND failure IS NULL ORDER BY created_at LIMIT 100').all().map(row => ({ ...row }));
+  }
+
+  outgoingRecovery(limit = 10, now = this.now()) {
+    this.assertUsable();
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(now)) throw new LocalError('invalid_configuration');
+    // Filter before LIMIT: retained, expired unknowns must never starve live retries.
+    // Earliest deadline first uses the partial index without sorting/scanning old rows.
+    const operations = this.db.prepare('SELECT key,created_at,retry_until FROM outgoing WHERE result IS NULL AND failure IS NULL AND retry_until>? ORDER BY retry_until,created_at,key LIMIT ?').all(now, limit).map(row => ({ ...row }));
+    const expiredCount = this.db.prepare('SELECT count(*) AS n FROM outgoing WHERE result IS NULL AND failure IS NULL AND retry_until<=?').get(now).n;
+    return { operations, expiredCount };
   }
 
   recordSendResult(key, result) {
@@ -268,15 +303,25 @@ export class Inbox {
     if (Buffer.byteLength(encoded) > 16384) throw new LocalError('invalid_response', { effect: 'unknown' });
     this.transaction(() => {
       if (!this.outgoing(key)) throw new LocalError('invalid_configuration');
-      this.db.prepare('UPDATE outgoing SET result=? WHERE key=?').run(encoded, key);
+      this.db.prepare('UPDATE outgoing SET result=?,failure=NULL,uncertain=0 WHERE key=?').run(encoded, key);
     }, { growth: Buffer.byteLength(encoded) * 2 + 8192 });
+  }
+
+  markOutgoingAttempt(key) {
+    this.transaction(()=>this.db.prepare('UPDATE outgoing SET uncertain=1 WHERE key=?').run(key));
+  }
+
+  recordSendFailure(key, failure) {
+    const encoded=canonical(failure);
+    if(Buffer.byteLength(encoded)>16384)throw new LocalError('invalid_response',{effect:'unknown'});
+    this.transaction(()=>this.db.prepare('UPDATE outgoing SET failure=?,uncertain=0 WHERE key=? AND result IS NULL').run(encoded,key),{growth:Buffer.byteLength(encoded)*2+8192});
   }
 
   collect(limit = 100) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new LocalError('invalid_configuration');
     return this.transaction(() => {
       const removedInbox = this.db.prepare("DELETE FROM inbox WHERE message_id IN (SELECT message_id FROM inbox WHERE state='consumed' AND retain_until<? ORDER BY retain_until LIMIT ?)").run(this.now(), limit).changes;
-      const removedSends = this.db.prepare('DELETE FROM outgoing WHERE key IN (SELECT key FROM outgoing WHERE result IS NOT NULL AND retry_until<? ORDER BY retry_until LIMIT ?)').run(this.now(), limit).changes;
+      const removedSends = this.db.prepare('DELETE FROM outgoing WHERE key IN (SELECT key FROM outgoing WHERE (result IS NOT NULL OR failure IS NOT NULL) AND retry_until<? ORDER BY retry_until LIMIT ?)').run(this.now(), limit).changes;
       return { removed_inbox: removedInbox, removed_sends: removedSends };
     });
   }

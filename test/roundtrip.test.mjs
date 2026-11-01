@@ -20,9 +20,9 @@ test('two Pi sessions real broker A→B→A; read ACK advances FIFO; resume keep
   const ta={...createTools({client:a.client}),...createCooperativeInbox({inbox:a.inbox})};
   const tb={...createTools({client:b.client}),...createCooperativeInbox({inbox:b.inbox})};
   assert.equal((await ta.broker_list_clients()).clients.length,2);
-  const sent=await ta.broker_send({recipient_id:b.inbox.identity.client_id,text:'ping',send_key:'same-request-0001'});
+  const sent=await ta.broker_send({recipient_id:b.inbox.identity.client_id,text:'ping'},{operationId:'same-native-call',operationStartedAt:f.now});
   assert.ok(sent.message_id);
-  assert.equal((await ta.broker_send({recipient_id:b.inbox.identity.client_id,text:'ping',send_key:'same-request-0001'})).message_id,sent.message_id);
+  assert.equal((await ta.broker_send({recipient_id:b.inbox.identity.client_id,text:'ping'},{operationId:'same-native-call',operationStartedAt:f.now})).message_id,sent.message_id);
   await until(()=>b.inbox.head());
   const received=await tb.broker_receive(); assert.match(received.message,/ping/);
   const ack=await tb.broker_acknowledge({message_id:received.message_id,receipt_token:received.receipt_token});

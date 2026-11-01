@@ -14,10 +14,10 @@ const pkg=JSON.parse(readFileSync(join(base,'package.json'),'utf8'));
 assert.equal(pkg.version,'1.4.0');
 const root=mkdtempSync(join(tmpdir(),'pi-broker-native-'));
 process.env.PI_CODING_AGENT_DIR=join(root,'agent'); process.env.HOME=root; process.env.PI_OFFLINE='1';
-delete process.env.PSST_CONFIG_FILE; delete process.env.PSST_CONFIG;
+delete process.env.PSST_CONFIG_FILE; delete process.env.PSST_CONFIG; delete process.env.PSST_DIAGNOSTIC_MANUAL;
 const {loadExtensions}=await import(pathToFileURL(join(base,'dist/core/extensions/loader.js')).href);
 
-test('official Pi 1.4.0 discovers/loads packed extension and its six native tools without credentials',async t=>{
+test('official Pi 1.4.0 discovers/loads packed extension and its automatic-only native tools without credentials',async t=>{
   t.after(()=>rmSync(root,{recursive:true,force:true}));
   const packed=spawnSync('npm',['pack','--ignore-scripts','--json','--pack-destination',root],{cwd:process.cwd(),env:process.env,encoding:'utf8',timeout:30000});
   assert.equal(packed.status,0,packed.stderr);
@@ -36,13 +36,24 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   assert.deepEqual(loaded.errors,[]);
   assert.equal(loaded.extensions.length,1);
   const ext=loaded.extensions[0];
-  assert.deepEqual([...ext.tools.keys()].sort(),['broker_acknowledge','broker_identity','broker_list_clients','broker_message_status','broker_receive','broker_send']);
+  assert.deepEqual([...ext.tools.keys()].sort(),['broker_cancel','broker_identity','broker_list_clients','broker_message_content','broker_message_status','broker_resend','broker_send','broker_sent_history']);
   assert.ok(ext.commands.has('psst-status'));
   assert.ok(ext.commands.has('psst-connect'));
+  assert.ok(ext.handlers.has('session_info_changed'));
+  assert.ok(ext.handlers.has('model_select'));
+
+  assert.equal(ext.commands.has('psst-mode'),false);
+  process.env.PSST_DIAGNOSTIC_MANUAL='1';
+  const diagnosticLoaded=await loadExtensions([join(packageRoot,'extensions/psst.ts')],root);
+  delete process.env.PSST_DIAGNOSTIC_MANUAL;
+  assert.deepEqual(diagnosticLoaded.errors,[]);
+  assert.ok(diagnosticLoaded.extensions[0].tools.has('broker_receive'));
+  assert.ok(diagnosticLoaded.extensions[0].tools.has('broker_acknowledge'));
+  assert.ok(diagnosticLoaded.extensions[0].commands.has('psst-mode'));
   const ctx={hasUI:false,sessionManager:{getSessionId:()=> 'native-fixture'}};
   await ext.commands.get('psst-connect').handler('/missing/connection.json', ctx);
   for(const handler of ext.handlers.get('session_start')) await handler({type:'session_start'},ctx);
-  const result=await ext.tools.get('broker_receive').definition.execute('fixture-tool',{},undefined,undefined,ctx);
+  const result=await ext.tools.get('broker_identity').definition.execute('fixture-tool',{},undefined,undefined,ctx);
   assert.equal(result.isError,true);assert.equal(result.details.error.code,'session_mismatch');
   for(const handler of ext.handlers.get('session_shutdown')) await handler({type:'session_shutdown'},ctx);
   // Actual native runtime + official local faux model: no provider auth or network.
@@ -52,16 +63,19 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   const { SessionManager } = await import(pathToFileURL(join(base,'dist/core/session-manager.js')).href);
   const { fauxProvider, fauxAssistantMessage } = await import(pathToFileURL(join(host,'node_modules/@earendil-works/pi-ai/dist/providers/faux.js')).href);
   const { NativeDelivery } = await import(pathToFileURL(join(packageRoot,'src/native-delivery.mjs')).href);
+  const { nativeSessionMetadata } = await import(pathToFileURL(join(packageRoot,'src/session-metadata.mjs')).href);
   const { Inbox, newSessionIdentity } = await import(pathToFileURL(join(packageRoot,'vendor/broker/reference/inbox.mjs')).href);
   const { randomUUID } = await import('node:crypto');
   const runtime = await ModelRuntime.create({authPath:join(root,'fixture-auth.json'),modelsPath:null,refreshOnCreate:false});
-  const faux = fauxProvider({tokensPerSecond:100000});
+  const faux = fauxProvider({tokensPerSecond:100000,models:[{id:'fixture-model-a'},{id:'fixture-model-b'}]});
   let releaseBusy;
   faux.setResponses([async()=>{await new Promise(resolve=>releaseBusy=resolve);return fauxAssistantMessage('initial turn');},fauxAssistantMessage('native reply A'),fauxAssistantMessage('native reply B')]);
   runtime.registerNativeProvider(faux.provider);
   let nativeApi, nativeCtx;
+  const metadataEvents=[];
   const loader = new DefaultResourceLoader({cwd:root,agentDir:join(root,'native-agent'),noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,
-    extensionFactories:[api=>{nativeApi=api;api.on('session_start',(_event,context)=>nativeCtx=context);} ]});
+    extensionFactories:[api=>{nativeApi=api;api.on('session_start',(_event,context)=>nativeCtx=context);
+      for(const event of ['session_info_changed','model_select'])api.on(event,(_event,context)=>metadataEvents.push({event,metadata:nativeSessionMetadata(api,context)}));} ]});
   await loader.reload();
   const manager = SessionManager.create(root,join(root,'native-sessions'));
   const {session: nativeSession} = await createAgentSession({cwd:root,agentDir:join(root,'native-agent'),modelRuntime:runtime,model:faux.getModel(),resourceLoader:loader,sessionManager:manager,noTools:'all'});
@@ -72,6 +86,18 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   let delivery = new NativeDelivery({session:sessionAdapter,pi:nativeApi,ctx:nativeCtx});
   t.after(()=>{delivery.stop();inbox.close();nativeSession.dispose();});
   const until = async predicate => {for(let n=0;n<300;n++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}throw Error('native fixture timed out');};
+  // Actual supported host APIs/events, not a guessed session fixture. Metadata
+  // observation must not itself switch the model, invoke it or rotate a session.
+  const nativeId=manager.getSessionId();
+  assert.equal(nativeSessionMetadata(nativeApi,nativeCtx).project,root.split('/').at(-1));
+  assert.deepEqual(nativeSessionMetadata(nativeApi,nativeCtx).model,{provider:faux.getModel().provider,id:'fixture-model-a',source:'observed'});
+  nativeSession.setSessionName('Native review');
+  await until(()=>metadataEvents.some(row=>row.event==='session_info_changed'));
+  assert.match(metadataEvents.find(row=>row.event==='session_info_changed').metadata.name,/^Native review \[/);
+  await nativeSession.setModel(faux.getModel('fixture-model-b'));
+  assert.equal(metadataEvents.findLast(row=>row.event==='model_select').metadata.model.id,'fixture-model-b');
+  assert.equal(manager.getSessionId(),nativeId);assert.equal(faux.state.callCount,0);
+  await nativeSession.setModel(faux.getModel('fixture-model-a'));
   const started = nativeSession.prompt('fixture user input');
   await until(()=>!!releaseBusy);
   for(let sequence=1;sequence<=2;sequence++) inbox.accept({protocol_version:'1',message_id:randomUUID(),recipient_id:identity.client_id,recipient_sequence:sequence,

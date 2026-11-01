@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { LocalError } from '../vendor/broker/reference/errors.mjs';
-import { provenance } from '../vendor/broker/reference/runtime.mjs';
+import { nativeMessage } from './message-format.mjs';
 import { validateUuid } from '../vendor/broker/src/protocol.mjs';
 
 /** Application-level explicit read ACK. Never a native injection receipt or action success. */
@@ -23,7 +23,7 @@ export function createCooperativeInbox({ inbox, isActive = () => true }) {
           receipt = { receipt_token: randomUUID() };
           inbox.db.prepare('INSERT INTO cooperative_receipts(message_id,receipt_token,exposed_at) VALUES(?,?,?)').run(head.message_id, receipt.receipt_token, inbox.now());
         }
-        return { message_id: head.message_id, message: provenance(head.envelope), receipt_token: receipt.receipt_token,
+        return { message_id: head.message_id, message: nativeMessage(head.envelope), receipt_token: receipt.receipt_token,
           local_state: 'pending', local_mode: 'cooperative_pull', native_acceptance_recorded: false,
           acknowledgment_required: true };
       }, { growth: 4096 });

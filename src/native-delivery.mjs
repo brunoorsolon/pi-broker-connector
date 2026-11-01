@@ -1,6 +1,6 @@
 import { openSync, closeSync, readSync, fstatSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { provenance } from '../vendor/broker/reference/runtime.mjs';
+import { nativeMessage, NATIVE_FORMAT } from './message-format.mjs';
 import { LocalError } from '../vendor/broker/reference/errors.mjs';
 
 export const CUSTOM_TYPE = 'psst-agent-message';
@@ -29,22 +29,27 @@ export function findPersistedReceipt(file, offset, expected) {
 }
 
 export class NativeDelivery {
-  constructor({ session, pi, ctx, diagnostic = () => {} }) {
+  constructor({ session, pi, ctx, allowManual = false, diagnostic = () => {} }) {
     this.session = session; this.inbox = session.inbox; this.pi = pi; this.ctx = ctx;
     let lastDiagnostic;
     this.diagnostic = code => { if (code !== lastDiagnostic) { lastDiagnostic = code; diagnostic(code); } };
+    this.allowManual = allowManual === true;
     this.timer = null; this.stopped = false;
     this.inbox.transaction(() => {
       this.inbox.db.exec(`CREATE TABLE IF NOT EXISTS pi_native_handoffs(
         message_id TEXT PRIMARY KEY REFERENCES inbox(message_id) ON DELETE CASCADE,
-        injection_id TEXT NOT NULL, session_file TEXT NOT NULL, file_offset INTEGER NOT NULL);
+        injection_id TEXT NOT NULL, session_file TEXT NOT NULL, file_offset INTEGER NOT NULL, format_version TEXT);
         CREATE TABLE IF NOT EXISTS pi_delivery_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);`);
+      // NULL identifies pre-upgrade handoffs; never reinterpret their receipts.
+      if (!this.inbox.db.prepare('PRAGMA table_info(pi_native_handoffs)').all().some(column => column.name === 'format_version')) {
+        this.inbox.db.exec('ALTER TABLE pi_native_handoffs ADD COLUMN format_version TEXT');
+      }
     });
   }
-  get mode() { return this.inbox.db.prepare("SELECT value FROM pi_delivery_settings WHERE key='mode'").get()?.value || 'auto'; }
+  get mode() { if (!this.allowManual) return 'auto'; return this.inbox.db.prepare("SELECT value FROM pi_delivery_settings WHERE key='mode'").get()?.value || 'auto'; }
   get disconnected() { return this.inbox.db.prepare("SELECT value FROM pi_delivery_settings WHERE key='disconnected'").get()?.value === 'true'; }
   setting(key, value) { this.inbox.transaction(() => this.inbox.db.prepare('INSERT OR REPLACE INTO pi_delivery_settings(key,value) VALUES(?,?)').run(key,value)); }
-  setMode(mode) { if (!['auto','manual'].includes(mode)) throw new LocalError('invalid_configuration'); this.setting('mode',mode); }
+  setMode(mode) { if (!['auto','manual'].includes(mode) || (mode === 'manual' && !this.allowManual)) throw new LocalError('invalid_configuration'); this.setting('mode',mode); }
   start() { this.timer = setInterval(() => this.tick(), 500); this.timer.unref?.(); }
   stop() { this.stopped = true; clearInterval(this.timer); this.timer = null; }
   tick() {
@@ -57,7 +62,7 @@ export class NativeDelivery {
       if (head.state !== 'pending') {
         if (saved && this.ctx.sessionManager.getSessionFile?.() === saved.session_file) {
           const receipt = findPersistedReceipt(saved.session_file, saved.file_offset, {
-            messageId: head.message_id, injectionId: saved.injection_id, clientId: this.inbox.identity.client_id, content: provenance(head.envelope),
+            messageId: head.message_id, injectionId: saved.injection_id, clientId: this.inbox.identity.client_id, content: nativeMessage(head.envelope, saved.format_version),
           });
           if (receipt) {
             this.inbox.recordNativeAcceptance(head.message_id, saved.injection_id, {accepted:true,receipt_id:`pi:${receipt}`});
@@ -81,11 +86,11 @@ export class NativeDelivery {
         const current = this.inbox.head();
         if (current?.message_id !== head.message_id || current.state !== 'pending') throw new LocalError('unsafe_boundary');
         this.inbox.db.prepare("UPDATE inbox SET state='injecting',injection_id=? WHERE message_id=?").run(injectionId,head.message_id);
-        this.inbox.db.prepare('INSERT INTO pi_native_handoffs(message_id,injection_id,session_file,file_offset) VALUES(?,?,?,?)').run(head.message_id,injectionId,file,offset);
+        this.inbox.db.prepare('INSERT INTO pi_native_handoffs(message_id,injection_id,session_file,file_offset,format_version) VALUES(?,?,?,?,?)').run(head.message_id,injectionId,file,offset,NATIVE_FORMAT);
       }, {growth:4096});
       // Return/throw is not a receipt; async failure or lost completion stays
       // uncertain and is never automatically resubmitted, including after reload.
-      this.pi.sendMessage({customType:CUSTOM_TYPE,content:provenance(head.envelope),display:true,
+      this.pi.sendMessage({customType:CUSTOM_TYPE,content:nativeMessage(head.envelope),display:true,
         details:{message_id:head.message_id,injection_id:injectionId,client_id:this.inbox.identity.client_id}},
       {triggerTurn:true,deliverAs:'followUp'});
       this.diagnostic('native_handoff_pending');

@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/matuto-ai/psst",
+  "commit": "2a21c0c332cab0570e9a54aa0e7e0be41e1d9eba",
+  "files": {
+    "src/server.mjs": "7a02ae7f05c50dd66b41c047c8c0b6777b4e2b53",
+    "src/store.mjs": "ccfd723c340d6490b2f03e2dd4e9dab592988c88",
+    "src/protocol.mjs": "79d7cf321c6e8bbef082eddd4f81b31781c8fcc3",
+    "src/auth.mjs": "38031078fc03898fcb182e223f2e716756edd69d",
+    "test/helpers.mjs": "e39f1b938e43a33c4845278eb53acbc1cc0e8257",
+    "LICENSE": "fd94ae265e6eae408a8333471e8b8c1768065a69",
+    "src/presence.mjs": "276404d46f30ca1a05cdd553b38125f9e4349ac8"
+  }
+}

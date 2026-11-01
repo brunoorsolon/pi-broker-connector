@@ -301,6 +301,19 @@ export class AdapterRuntime {
       await Promise.allSettled([this.attachmentPromise, this.client.connectPromise].filter(Boolean));
     })();
     await this.drainPromise;
-    if (this.closeRequested) await this.requestClose();
+    if (this.closeRequested) {
+      // A terminal escalation may arrive while a prior resumable stop is still
+      // disconnecting. Serialize them so the late disconnect cannot race close.
+      await this.disconnectPromise;
+      await this.requestClose();
+    }
+    else if (this.client.policy?.resumable_disconnect && typeof this.client.disconnectSession === 'function'
+      && this.client.attachment.lease_epoch) {
+      // Feature-gated for old brokers. Drain all reconnect/heartbeat work first;
+      // a stale final epoch can never disconnect a replacement session.
+      this.disconnectPromise ??= this.client.disconnectSession({ signal: AbortSignal.timeout(5000) })
+        .catch(error => this.diagnostic(error.code ?? 'disconnect_failed'));
+      await this.disconnectPromise;
+    }
   }
 }
