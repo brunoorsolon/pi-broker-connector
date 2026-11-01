@@ -39,6 +39,8 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   assert.deepEqual([...ext.tools.keys()].sort(),['broker_acknowledge','broker_identity','broker_list_clients','broker_message_status','broker_receive','broker_send']);
   assert.ok(ext.commands.has('psst-status'));
   assert.ok(ext.commands.has('psst-connect'));
+  assert.ok(ext.handlers.has('session_info_changed'));
+  assert.ok(ext.handlers.has('model_select'));
   const ctx={hasUI:false,sessionManager:{getSessionId:()=> 'native-fixture'}};
   await ext.commands.get('psst-connect').handler('/missing/connection.json', ctx);
   for(const handler of ext.handlers.get('session_start')) await handler({type:'session_start'},ctx);
@@ -52,16 +54,19 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   const { SessionManager } = await import(pathToFileURL(join(base,'dist/core/session-manager.js')).href);
   const { fauxProvider, fauxAssistantMessage } = await import(pathToFileURL(join(host,'node_modules/@earendil-works/pi-ai/dist/providers/faux.js')).href);
   const { NativeDelivery } = await import(pathToFileURL(join(packageRoot,'src/native-delivery.mjs')).href);
+  const { nativeSessionMetadata } = await import(pathToFileURL(join(packageRoot,'src/session-metadata.mjs')).href);
   const { Inbox, newSessionIdentity } = await import(pathToFileURL(join(packageRoot,'vendor/broker/reference/inbox.mjs')).href);
   const { randomUUID } = await import('node:crypto');
   const runtime = await ModelRuntime.create({authPath:join(root,'fixture-auth.json'),modelsPath:null,refreshOnCreate:false});
-  const faux = fauxProvider({tokensPerSecond:100000});
+  const faux = fauxProvider({tokensPerSecond:100000,models:[{id:'fixture-model-a'},{id:'fixture-model-b'}]});
   let releaseBusy;
   faux.setResponses([async()=>{await new Promise(resolve=>releaseBusy=resolve);return fauxAssistantMessage('initial turn');},fauxAssistantMessage('native reply A'),fauxAssistantMessage('native reply B')]);
   runtime.registerNativeProvider(faux.provider);
   let nativeApi, nativeCtx;
+  const metadataEvents=[];
   const loader = new DefaultResourceLoader({cwd:root,agentDir:join(root,'native-agent'),noExtensions:true,noSkills:true,noPromptTemplates:true,noThemes:true,noContextFiles:true,
-    extensionFactories:[api=>{nativeApi=api;api.on('session_start',(_event,context)=>nativeCtx=context);} ]});
+    extensionFactories:[api=>{nativeApi=api;api.on('session_start',(_event,context)=>nativeCtx=context);
+      for(const event of ['session_info_changed','model_select'])api.on(event,(_event,context)=>metadataEvents.push({event,metadata:nativeSessionMetadata(api,context)}));} ]});
   await loader.reload();
   const manager = SessionManager.create(root,join(root,'native-sessions'));
   const {session: nativeSession} = await createAgentSession({cwd:root,agentDir:join(root,'native-agent'),modelRuntime:runtime,model:faux.getModel(),resourceLoader:loader,sessionManager:manager,noTools:'all'});
@@ -72,6 +77,18 @@ test('official Pi 1.4.0 discovers/loads packed extension and its six native tool
   let delivery = new NativeDelivery({session:sessionAdapter,pi:nativeApi,ctx:nativeCtx});
   t.after(()=>{delivery.stop();inbox.close();nativeSession.dispose();});
   const until = async predicate => {for(let n=0;n<300;n++){if(predicate())return;await new Promise(r=>setTimeout(r,10));}throw Error('native fixture timed out');};
+  // Actual supported host APIs/events, not a guessed session fixture. Metadata
+  // observation must not itself switch the model, invoke it or rotate a session.
+  const nativeId=manager.getSessionId();
+  assert.equal(nativeSessionMetadata(nativeApi,nativeCtx).project,root.split('/').at(-1));
+  assert.deepEqual(nativeSessionMetadata(nativeApi,nativeCtx).model,{provider:faux.getModel().provider,id:'fixture-model-a',source:'observed'});
+  nativeSession.setSessionName('Native review');
+  await until(()=>metadataEvents.some(row=>row.event==='session_info_changed'));
+  assert.match(metadataEvents.find(row=>row.event==='session_info_changed').metadata.name,/^Native review \[/);
+  await nativeSession.setModel(faux.getModel('fixture-model-b'));
+  assert.equal(metadataEvents.findLast(row=>row.event==='model_select').metadata.model.id,'fixture-model-b');
+  assert.equal(manager.getSessionId(),nativeId);assert.equal(faux.state.callCount,0);
+  await nativeSession.setModel(faux.getModel('fixture-model-a'));
   const started = nativeSession.prompt('fixture user input');
   await until(()=>!!releaseBusy);
   for(let sequence=1;sequence<=2;sequence++) inbox.accept({protocol_version:'1',message_id:randomUUID(),recipient_id:identity.client_id,recipient_sequence:sequence,
