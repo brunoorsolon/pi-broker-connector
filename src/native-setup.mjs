@@ -11,22 +11,25 @@ export function nativeBrokerSettings(env=process.env) {
  return {read(){const url=env.PSST_BROKER_URL||store.snapshot().brokerUrl||store.readPending()?.brokerUrl;return url?brokerOrigin(url):null;}};
 }
 // Called only from an explicit native command, never session_start/auth recovery.
-export async function nativeSetup(ctx,{env=process.env,settings=nativeBrokerSettings(env),approvalClient,resumeRequest,beforeBegin=()=>{},stillCurrent=()=>true}={}) {
+export async function nativeSetup(ctx,{env=process.env,settings=nativeBrokerSettings(env),approvalClient,resumeRequest,beforeBegin=()=>{},stillCurrent=()=>true,onPhase=()=>{}}={}) {
  if(!ctx?.hasUI)throw new LocalError('native_input_unavailable');
+ onPhase('url_input');
  const entered=await ctx.ui.input('Psst broker HTTPS URL',settings.read()||'https://');
  if(entered===undefined||!stillCurrent())return null;
+ onPhase('url_validation');
  const brokerUrl=brokerOrigin(entered);
  if(env.PSST_BROKER_URL&&brokerOrigin(env.PSST_BROKER_URL)!==brokerUrl)throw new LocalError('broker_origin_mismatch');
  const options={brokerUrl,directory:storageLayout(env).installationDirectory,clientType:'pi'};
+ onPhase('approval_state_read');
  const previous=await approvalClient.readApprovalState(options);
  if(!stillCurrent())return null;
  if(previous&&previous.state!=='pending'&&!(resumeRequest?.brokerUrl===brokerUrl&&resumeRequest.requestId===previous.requestId&&previous.state==='approved')){
   if(!await ctx.ui.confirm('Request replacement authorization?', 'The existing connection stays selected until the administrator approves the replacement and it connects successfully.')||!stillCurrent())return null;
   options.replaceRequestId=previous.requestId;
  }
- await beforeBegin(options);
+ onPhase('selection_write');await beforeBegin(options);
  if(!stillCurrent())return null;
- const result=await approvalClient.beginApproval(options);
+ onPhase('enrollment_request');const result=await approvalClient.beginApproval(options);
  if(!stillCurrent())return null;
  return {...result,brokerUrl,options};
 }

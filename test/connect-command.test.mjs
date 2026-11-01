@@ -206,3 +206,33 @@ test('newer cross-process intent during old registration prevents stale promotio
  const next={...old,intentId:'next-explicit-intent',requestId:'next-explicit-request'};assert.equal(f.pathStore.writePending(next,old.intentId),true);
  release();await task;assert.equal(f.pathStore.read(),null);assert.deepEqual(f.pathStore.readPending(),next);assert.ok(f.notices.some(n=>n.includes('superseded')));await host.events.session_shutdown();
 });
+
+test('bare connect explains setup/status and does not inspect or change saved configuration',async t=>{
+ const f=fixture(t);let reads=0;const host=f.load({pathStore:{snapshot(){reads++;throw Error('must not read');}}});
+ await host.commands['psst-connect'].handler('',f.ctx);assert.equal(reads,0);assert.equal(f.active,0);
+ assert.match(f.notices.at(-1),/psst-setup.*psst-status/);assert.equal(f.notices.at(-1).includes('invalid_configuration'),false);
+});
+test('setup reports sanitized failing phase and status retains last diagnostic',async t=>{
+ const f=fixture(t),secret='fixture-secret-private';
+ const host=f.load({setupUI:async(_ctx,{onPhase})=>{onPhase('url_validation');throw Object.assign(Error(secret),{code:'broker_origin_mismatch'});}});
+ await host.commands['psst-setup'].handler('',f.ctx);
+ assert.match(f.notices.at(-1),/broker_origin_mismatch; phase=url_validation; request=not_started/);
+ await host.commands['psst-status'].handler('',f.ctx);
+ assert.ok(f.notices.filter(n=>n.includes('phase=url_validation')).length>=2);
+ assert.ok(f.notices.some(n=>n.includes('connector 0.4.0')));assert.ok(f.notices.every(n=>!n.includes(secret)));
+ assert.equal(f.pathStore.readPending(),null);
+});
+test('failed request after intent save reports unknown outcome, preserving exact pending intent',async t=>{
+ const f=fixture(t);const host=f.load({setupUI:async(_ctx,{beforeBegin,onPhase})=>{await beforeBegin({brokerUrl:'https://broker.example'});onPhase('enrollment_request');throw Object.assign(Error('raw body must not leak'),{code:'invalid_response'});}});
+ await host.commands['psst-setup'].handler('',f.ctx);assert.ok(f.pathStore.readPending().intentId);
+ assert.match(f.notices.at(-1),/invalid_response; phase=enrollment_request; request=outcome_unknown/);
+ assert.equal(f.pathStore.read(),null);assert.ok(f.notices.every(n=>!n.includes('raw body')));
+});
+test('invalid storage does not prevent registration of read-only doctor and diagnostic commands',async t=>{
+ const f=fixture(t),root=join(f.home,'unsafe-agent','psst');mkdirSync(root,{recursive:true,mode:0o700});
+ writeFileSync(join(root,'selection.sqlite'),'private-not-sqlite',{mode:0o600});
+ const env={PI_CODING_AGENT_DIR:join(f.home,'unsafe-agent')};const host=f.load({env,pathStore:null});
+ await host.commands['psst-doctor'].handler('',f.ctx);assert.match(f.notices.at(-1),/selection_file=ok/);
+ await host.commands['psst-setup'].handler('',f.ctx);assert.match(f.notices.at(-1),/phase=selection_read; request=not_started/);
+ assert.equal(readFileSync(join(root,'selection.sqlite'),'utf8'),'private-not-sqlite');
+});

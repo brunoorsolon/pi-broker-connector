@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — setup diagnostics
+
+- Surface sanitized setup phase/error/request-state diagnostics and read-only `/psst-doctor` path checks without resetting credentials or weakening storage permissions.
+- Guard unsupported Node versions before loading the SQLite-backed adapter; report the loaded package/runtime and clarify bare `/psst-connect` and upgrade/reload guidance.
+
 ## 0.4.0 — prepared, not released
 
 - Replace primary secret-entry setup with one native URL field and administrator-approved access requests.

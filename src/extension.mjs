@@ -1,4 +1,6 @@
 import {randomUUID} from 'node:crypto';
+import { runtimeDescription } from './runtime-support.mjs';
+import { setupDiagnostic, diagnosticText, inspectPsstStorage, doctorText } from './setup-diagnostics.mjs';
 import {storageLayout} from './storage.mjs';
 import {ApprovalWatch} from './approval-watch.mjs';
 import {nativeSetup,brokerOrigin} from './native-setup.mjs';
@@ -11,7 +13,10 @@ import { createCooperativeInbox } from './cooperative-inbox.mjs';
 import { createTools, invokeTool } from '../vendor/broker/reference/tools.mjs';
 import { LocalError, safeError } from '../vendor/broker/reference/errors.mjs';
 
-export function installExtension(pi, Type, { configReader = readConfig, env = process.env, pathStore = createConfigPathStore(undefined, env), connectionResolver = resolveConnectionFile, createSession = options => new PiBrokerSession(options), approvalClient = {beginApproval: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.beginApproval(options)), pollApproval: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.pollApproval(options)), readApprovalState: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.readApprovalState(options))}, setupUI = nativeSetup } = {}) {
+export function installExtension(pi, Type, { configReader = readConfig, env = process.env, pathStore = null, connectionResolver = resolveConnectionFile, createSession = options => new PiBrokerSession(options), approvalClient = {beginApproval: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.beginApproval(options)), pollApproval: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.pollApproval(options)), readApprovalState: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.readApprovalState(options))}, setupUI = nativeSetup } = {}) {
+  // Defer storage validation until a command/startup can surface a sanitized diagnostic.
+  pathStore ??= Object.fromEntries(['read', 'snapshot', 'readPending', 'isDisconnected', 'setDisconnected', 'writePending', 'clearPending', 'write'].map(name => [name, (...args) => createConfigPathStore(undefined, env)[name](...args)]));
+  let lastSetupDiagnostic = null;
   let connectedConfig = null, attachmentActive = false;
   let owner = null, facade = null, delivery = null, ready = false, status = 'not_configured';
   let approvalWatch = null, setupGeneration = 0, approvalStatus = null;
@@ -26,6 +31,10 @@ export function installExtension(pi, Type, { configReader = readConfig, env = pr
     return next;
   };
   const notify = (ctx, text, kind = 'info') => { if (ctx?.hasUI) ctx.ui.notify(text, kind); };
+  const reportSetupFailure = (ctx, error, phase, requestState) => {
+    lastSetupDiagnostic = setupDiagnostic(error, phase, requestState);
+    notify(ctx, diagnosticText(lastSetupDiagnostic), 'warning');
+  };
   const setStatus = ctx => { if (ctx?.hasUI) ctx.ui.setStatus('psst', `Psst: ${status}${approvalStatus ? `; approval ${approvalStatus}` : ''}`); };
   const stop = async () => {
     delivery?.stop(); delivery = null;
@@ -63,7 +72,8 @@ export function installExtension(pi, Type, { configReader = readConfig, env = pr
       delivery?.stop(); delivery = null;
       const prior = owner; owner = null; facade = null; ready = false;
       if (prior) await prior.close();
-      setStatus(ctx); notify(ctx, `Psst could not connect (${status}). Use /psst-status and /reload to retry the saved credential; authorize replacement setup only when needed.`, 'warning');
+      reportSetupFailure(ctx,error,attachmentActive?'approved_attachment':'connection_start',attachmentActive?'approved':'not_started');
+      setStatus(ctx); notify(ctx, `Psst could not connect (${status}). ${status === 'owner_conflict' ? 'This conversation may already be open elsewhere; preserve its inbox and do not delete lock files.' : 'Use /psst-doctor and /psst-status; retry the saved credential with /reload, not new enrollment.'}`, 'warning');
     }
   };
   const followApproval = async (ctx, pending, initialResult) => {
@@ -115,7 +125,7 @@ export function installExtension(pi, Type, { configReader = readConfig, env = pr
       notify(ctx,`Psst authorization pending administrator approval (${result.requestId}). Existing connections are unchanged.`);
       approvalWatch=new ApprovalWatch({poll:()=>approvalClient.pollApproval(options),isCurrent:stillCurrent,onState:accept,
         onError:error=>{
-          if(error?.retryable!==true){approvalWatch?.stop();approvalStatus='check_stopped';setStatus(ctx);notify(ctx,'Psst approval check stopped. Existing selection and request are preserved; retry /psst-setup.','warning');}
+          if(error?.retryable!==true){approvalWatch?.stop();approvalStatus='check_stopped';setStatus(ctx);reportSetupFailure(ctx,error,'approval_poll','pending');}
         }});
       approvalWatch.start();
     }
@@ -124,7 +134,7 @@ export function installExtension(pi, Type, { configReader = readConfig, env = pr
     const task=schedule(epoch => connect(ctx, epoch)),expected=generation;await task;
     if(generation!==expected)return;
     try{const pending=pathStore.readPending?.();if(pending&&status!=='disconnected'&&!pathStore.isDisconnected?.(ctx.sessionManager.getSessionId())&&!env.PSST_CONFIG_FILE&&!env.PSST_CONFIG){const selected=pathStore.snapshot?.();if(!(ready&&selected?.approvalIntentId===pending.intentId&&selected.approvalRequestId===pending.requestId))await followApproval(ctx,pending);}}
-    catch{notify(ctx,'Psst saved approval could not be resumed. No new request was created.','warning');}
+    catch(error){reportSetupFailure(ctx,error,'approval_state_read','outcome_unknown');}
   });
   pi.on('session_shutdown', async () => schedule(async () => { await stop(); status = 'stopped'; }));
   pi.registerCommand('psst-setup', {
@@ -135,18 +145,23 @@ export function installExtension(pi, Type, { configReader = readConfig, env = pr
       cancelSetup();
       const attempt=setupGeneration,initial=generation,nativeId=ctx.sessionManager.getSessionId();
       const stillCurrent=()=>attempt===setupGeneration&&initial===generation&&ctx.sessionManager.getSessionId()===nativeId;
-      let pending=null,setupOptions=null;
+      let pending=null,setupOptions=null,phase='selection_read',requestState='not_started';
+      lastSetupDiagnostic=null;
+      const onPhase=value=>{phase=value;if(value==='enrollment_request')requestState='outcome_unknown';};
       try {
         const revision=pathStore.snapshot?.().revision;
         const previousPending=pathStore.readPending?.();
-        const selected=await setupUI(ctx,{env,approvalClient,resumeRequest:previousPending,stillCurrent,beforeBegin:options=>{
+        const selected=await setupUI(ctx,{env,approvalClient,resumeRequest:previousPending,stillCurrent,onPhase,beforeBegin:options=>{
+          phase='selection_write';
           if(!stillCurrent())throw new LocalError('session_mismatch');
           setupOptions={...options};
           pending=previousPending?.brokerUrl===options.brokerUrl&&!options.replaceRequestId?previousPending:{intentId:randomUUID(),brokerUrl:options.brokerUrl,requestId:null,replaceRequestId:options.replaceRequestId||null,selectionRevision:revision};
           if(pathStore.writePending?.(pending,previousPending?.intentId||null)===false)throw new LocalError('selection_changed');
+          requestState='intent_saved';
           pathStore.setDisconnected?.(nativeId,false);
         }});
         if(!selected||!stillCurrent())return;
+        phase='approved_attachment';requestState=selected.state==='pending'?'pending':selected.state==='approved'?'approved':'outcome_unknown';
         await followApproval(ctx,pending,selected);
       } catch(error) {
         if(error?.retryable===true&&pending&&setupOptions&&stillCurrent()){
@@ -156,17 +171,18 @@ export function installExtension(pi, Type, { configReader = readConfig, env = pr
           retryWatch=new ApprovalWatch({poll:()=>approvalClient.beginApproval(setupOptions),
             isCurrent:()=>stillCurrent()&&!pathStore.isDisconnected?.(nativeId)&&pathStore.readPending?.()?.intentId===pending.intentId,
             onState:async result=>{retryWatch.stop();await followApproval(ctx,pending,result);},
-            onError:failure=>{if(failure?.retryable!==true){retryWatch.stop();notify(ctx,'Psst access request stopped. Local candidate is preserved; retry /psst-setup explicitly.','warning');}}});
+            onError:failure=>{if(failure?.retryable!==true){retryWatch.stop();reportSetupFailure(ctx,failure,'enrollment_request','outcome_unknown');}}});
           approvalWatch=retryWatch;approvalStatus='request_retry';setStatus(ctx);
           retryWatch.start(Math.min(300000,Math.max(2000,error.retryAfterMs||2000)));
           notify(ctx,'Psst access request is waiting to retry with the same saved identity. /psst-disconnect cancels this session’s wait.');
-        }else notify(ctx,'Psst setup did not complete. Existing selection and local request are preserved; retry /psst-setup explicitly.','warning');
+        }else reportSetupFailure(ctx,error,phase,requestState);
       }
     },
   });
   pi.registerCommand('psst-connect', {
     description: 'Connect this Pi session using an absolute connection.json path; remember only the path',
     handler: async (args, ctx) => {
+      if (!args.trim()) { notify(ctx, 'Use /psst-setup for URL-only setup or /psst-status for the current connection. /psst-connect <absolute file> is only for an existing private compatibility bundle.'); return; }
       try {
         const epochBeforePairing = generation, sessionBeforePairing = ctx.sessionManager.getSessionId(),revision=pathStore.snapshot?.().revision;
         const path = await connectionResolver(validateConfigPath(args.trim()), {env});
@@ -196,10 +212,16 @@ export function installExtension(pi, Type, { configReader = readConfig, env = pr
       catch { notify(ctx, 'Connect first, then use /psst-mode auto or /psst-mode manual.', 'warning'); }
     },
   });
+  pi.registerCommand('psst-doctor', {
+    description: 'Read-only runtime and Psst path-metadata diagnostics; no enrollment or secret reads',
+    handler: async (_args, ctx) => { notify(ctx, runtimeDescription()); notify(ctx, doctorText(inspectPsstStorage(env))); },
+  });
   pi.registerCommand('psst-status', {
     description: 'Show this Pi session’s Psst broker status and client ID',
     handler: async (_args, ctx) => {
-      notify(ctx, ready && owner ? `Psst ${status}${approvalStatus ? `; approval ${approvalStatus}` : ''}; client ID ${owner.inbox.identity.client_id}; inbox ${owner.inbox.stats().pending_count} pending. Delivery mode: ${delivery?.mode}. Native acceptance is not model read or action success.` : `Psst ${status}${approvalStatus ? `; approval ${approvalStatus}` : ''}. Use /psst-setup for native first-time setup. No restart required.`);
+      notify(ctx, runtimeDescription());
+      if (lastSetupDiagnostic) notify(ctx, diagnosticText(lastSetupDiagnostic), 'warning');
+      notify(ctx, ready && owner ? `Psst ${status}${approvalStatus ? `; approval ${approvalStatus}` : ''}; client ID ${owner.inbox.identity.client_id}; inbox ${owner.inbox.stats().pending_count} pending. Delivery mode: ${delivery?.mode}. Native acceptance is not model read or action success.` : `Psst ${status}${approvalStatus ? `; approval ${approvalStatus}` : ''}. Use /psst-setup for native first-time setup; /psst-doctor checks local storage without changes.`);
     },
   });
   const empty = Type.Object({}, { additionalProperties: false });

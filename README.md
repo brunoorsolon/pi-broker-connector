@@ -40,7 +40,12 @@ The command requires the version to be present on npm. If publication is still p
 
 ### Connect once inside Pi — just the URL
 
-After installing/updating, use `/reload`, then `/psst-setup` **without arguments**.
+After installing/updating, use `/reload`, then `/psst-status` to verify the loaded connector/runtime.
+Use `/psst-setup` **without arguments** only for first-time or explicitly approved replacement setup.
+If the loaded commands still show the old secret-entry form, cancel it: do not enter an admin password.
+A live upgrade test retained the old form after `/reload`; starting a new Pi process loaded
+the URL-only form. The cause was not established. Use `/resume` to reopen the intended
+conversation rather than creating a new mailbox, and check `/psst-status` again.
 The native form has one text field: the HTTPS broker URL. There is no pairing
 secret to type, copy, distribute or place in a command. The connector generates
 and privately saves its candidate credential before requesting access. It returns
@@ -80,6 +85,28 @@ evidence of a merged, released or deployed broker API.
 Installing this connector does not deploy or enable that server API. Older private
 connection bundles and pairing files remain compatibility routes below.
 
+### Setup diagnostics (no credential reset)
+
+`/psst-status` reports the loaded connector version, actual Node version and setup interface.
+An unsupported Node version is rejected before loading SQLite-backed adapter code: start
+Pi using Node 24.19+ within major 24. The package engine range is not relaxed, and an npm
+engine warning does not establish the cause of every setup error.
+
+`/psst-doctor` checks only path metadata: missing paths, symlinked ancestors, wrong path
+kind, ownership and private-mode requirements. It does not open databases, read secrets,
+contact the broker, create directories, change permissions or submit approval requests.
+Its output names storage roles rather than printing private paths. Missing paths can be
+normal before setup. A symlinked package checkout alone is not a storage failure; the
+selected credential/state paths must still satisfy the existing real-path/private-storage policy.
+
+Setup failures retain an allowlisted error code, phase and request state for `/psst-status`.
+An `outcome_unknown` request may have reached the broker: keep local state and reconcile
+it instead of deleting credentials or starting another installation. `owner_conflict` means
+exclusive local ownership could not be acquired, not proof that another process is alive;
+check whether the intended conversation is already open and never delete its lock or inbox.
+Bare `/psst-connect` directs you to setup/status; its file argument is compatibility-only.
+Do not paste tokens, database contents or full environment dumps into a diagnostic report.
+
 ### Compatibility: connect with an existing private file
 
 With this version loaded, run one command **in the current Pi session**:
@@ -96,7 +123,7 @@ Install or update **inside the same sandbox**, then use `/reload` in the running
 pi install npm:@matuto-ai/pi-broker-connector@0.4.0
 ```
 
-This installer command is not a second agent session. No sandbox recreation or Pi process restart is required. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires 0.2.0 or later.
+This installer command is not a second agent session. Reload normally loads the package, but do not assume an old running process loaded an update: check `/psst-status`; if it still exposes the old interface, restart Pi and `/resume` the intended conversation. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires 0.2.0 or later.
 
 Keep `connection.json` and `token` private to the sandbox user (`0600`), directory `0700`. Never paste tokens into prompts, command arguments, Git, or shared config. Paths must refer to real files rather than symlinks. A `/tmp` bundle works for the current container but may disappear on container removal; remembering its path does not make the bundle persistent.
 
