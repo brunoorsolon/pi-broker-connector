@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — compact native message presentation
+
+- Show origin, exact sender/message IDs and escaped text without repeated policy paragraphs, null metadata or redundant MIME labels; wire validation and native role are unchanged.
+- Version durable native handoffs so pre-upgrade receipt reconciliation retains the exact legacy format without duplicate delivery.
+
 ## 0.4.0 — prepared, not released
 
 - Replace primary secret-entry setup with one native URL field and administrator-approved access requests.

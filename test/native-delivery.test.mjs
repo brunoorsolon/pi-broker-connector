@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Inbox, newSessionIdentity } from '../vendor/broker/reference/inbox.mjs';
+import { nativeMessage } from '../src/message-format.mjs';
+import { statSync } from 'node:fs';
 import { NativeDelivery } from '../src/native-delivery.mjs';
 const now=Date.now();
 function fixture(t) {
@@ -24,7 +26,7 @@ test('automatic native delivery waits for idle; persisted custom entry advances 
  const f=fixture(t),a=f.envelope(1),b=f.envelope(2);f.inbox.accept(a);f.inbox.accept(b);
  f.setIdle(false);f.delivery.tick();assert.equal(f.sent.length,0);f.setIdle(true);f.setPending(true);f.delivery.tick();assert.equal(f.sent.length,0);f.setPending(false);
  f.delivery.tick();assert.equal(f.sent.length,1);assert.equal(f.inbox.head().state,'injecting');
- assert.deepEqual(f.sent[0].options,{triggerTurn:true,deliverAs:'followUp'});assert.match(f.sent[0].message.content,/untrusted agent input/);
+ assert.deepEqual(f.sent[0].options,{triggerTurn:true,deliverAs:'followUp'});assert.match(f.sent[0].message.content,/^Broker message from AI agent /);assert.equal(f.sent[0].message.customType,'psst-agent-message');assert.doesNotMatch(f.sent[0].message.content,/authority|text\/plain|system\/developer|null/);
  f.delivery.tick();assert.equal(f.inbox.head().message_id,b.message_id);assert.equal(f.sent.length,1);
  const row=f.inbox.db.prepare('SELECT native_receipt FROM inbox WHERE message_id=?').get(a.message_id);assert.match(row.native_receipt,/^pi:/);
  f.delivery.tick();assert.equal(f.sent.length,2);f.delivery.tick();assert.equal(f.inbox.head(),null);
@@ -63,4 +65,22 @@ test('observed auth pause blocks new turns but reconciles prior handoff; reconne
  f.setAllowed(false);f.delivery.tick();assert.equal(f.inbox.head().message_id,second.message_id,'historical receipt can reconcile during auth pause');
  f.delivery.tick();assert.equal(f.sent.length,1);assert.equal(f.inbox.head().state,'pending');
  f.reopen();f.delivery.tick();assert.equal(f.sent.length,1);f.setAllowed(true);f.delivery.tick();assert.equal(f.sent.length,2);
+});
+
+
+test('upgrade reconciles legacy persisted receipt using original format without reinjection',t=>{
+ const f=fixture(t),message=f.envelope(1),injectionId=randomUUID();f.inbox.accept(message);
+ // Reconstruct the exact pre-upgrade schema and already committed native handoff.
+ f.inbox.db.exec('DROP TABLE pi_native_handoffs; CREATE TABLE pi_native_handoffs(message_id TEXT PRIMARY KEY REFERENCES inbox(message_id) ON DELETE CASCADE,injection_id TEXT NOT NULL,session_file TEXT NOT NULL,file_offset INTEGER NOT NULL)');
+ f.inbox.db.prepare("UPDATE inbox SET state='injecting',injection_id=? WHERE message_id=?").run(injectionId,message.message_id);
+ f.inbox.db.prepare('INSERT INTO pi_native_handoffs VALUES(?,?,?,?)').run(message.message_id,injectionId,f.file,statSync(f.file).size);
+ appendFileSync(f.file,JSON.stringify({type:'custom_message',customType:'psst-agent-message',id:'legacy-receipt',content:nativeMessage(message,'legacy-v1'),details:{message_id:message.message_id,injection_id:injectionId,client_id:f.identity.client_id}})+'\n');
+ f.reopen();f.delivery.tick();assert.equal(f.inbox.head(),null);assert.equal(f.sent.length,0);
+ assert.equal(f.inbox.db.prepare('SELECT native_receipt FROM inbox WHERE message_id=?').get(message.message_id).native_receipt,'pi:legacy-receipt');
+});
+
+test('unknown future format stays uncertain and never guesses or reinjects',t=>{
+ const f=fixture(t);f.inbox.accept(f.envelope(1));f.delivery.tick();
+ f.inbox.db.prepare("UPDATE pi_native_handoffs SET format_version='future-v9'").run();
+ f.reopen();f.delivery.tick();assert.ok(f.inbox.head());assert.equal(f.sent.length,1);assert.equal(f.diagnostics.at(-1),'native_handoff_unknown');
 });
