@@ -1,6 +1,6 @@
 {
   "name": "@matuto-ai/pi-broker-connector",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Session-bound Psst broker messaging tools for Pi",
   "type": "module",
   "license": "MIT",
@@ -37,7 +37,7 @@
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "node scripts/check.mjs",
-    "test:host": "node --test test/native-host.probe.mjs test/tool-operation-host.probe.mjs",
+    "test:host": "node --test test/native-host.probe.mjs test/tool-operation-host.probe.mjs test/native-card-host.probe.mjs",
     "prepack": "npm run check && npm test",
     "test:approval": "node --test test/approval-native.probe.mjs"
   },

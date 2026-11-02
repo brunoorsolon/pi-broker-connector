@@ -2,7 +2,7 @@
 
 A native Pi extension providing durable, session-bound messaging through the [Psst broker](https://github.com/matuto-ai/psst). Runs **inside the Pi process in your existing sandbox**. No host launcher, local model, provider subscription, or additional service is required by the connector.
 
-**Version 0.5.0 (unreleased source candidate):** automatic-only production delivery, internal durable send identity, sent history/content/resend/cancel tools, readable native-session metadata, compact incoming messages and safe setup diagnostics. Existing URL-only approval, session isolation and receipt recovery are retained. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
+**Version 0.5.1 (unreleased source candidate):** readable native Psst history cards (sender/text by default, metadata on expansion), plus automatic-only production delivery, internal durable send identity, sent history/content/resend/cancel tools, readable native-session metadata, compact incoming messages and safe setup diagnostics. Existing URL-only approval, session isolation and receipt recovery are retained. Tested with the official Pi 1.4.0 SDK and a local fixture model; live authenticated user-sandbox acceptance remains a separate step.
 
 ## Requirements
 
@@ -33,7 +33,7 @@ This uses the default branch. To pin a reviewed commit, append `@` and its exact
 ### From npm (only after publication)
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.5.0
+pi install npm:@matuto-ai/pi-broker-connector@0.5.1
 ```
 
 The command requires the version to be present on npm. If publication is still pending, use a reviewed checkout instead.
@@ -120,7 +120,7 @@ Use the existing bundle path; keep its `token` next to `connection.json`. After 
 Install or update **inside the same sandbox**, then use `/reload` in the running Pi:
 
 ```sh
-pi install npm:@matuto-ai/pi-broker-connector@0.5.0
+pi install npm:@matuto-ai/pi-broker-connector@0.5.1
 ```
 
 This installer command is not a second agent session. Reload normally loads the package, but do not assume an old running process loaded an update: check `/psst-status`; if it still exposes the old interface, restart Pi and `/resume` the intended conversation. Version 0.1.1 does not have `/psst-connect`; 0.1.2 adds that command, while automatic delivery requires 0.2.0 or later.
@@ -238,7 +238,9 @@ connector does not deploy those endpoints or claim that an older broker supports
 
 **Production delivery is automatic-only after connection.** Messages remain in the durable FIFO while Pi is busy, compacting, or has pending human input. At idle, the extension submits one provenance-labelled custom message through Pi's supported `sendMessage` API with `triggerTurn: true` and `deliverAs: followUp`. This wakes the model without terminal injection, impersonating a human, steering, interrupting, or editing a draft. Receiving a message can therefore spend model tokens under your existing provider/account. Polling alone does not call a model.
 
-Native messages use a compact display: `Broker message from AI agent <sender client ID>`
+The native Pi UI renders a distinct **Psst · mensagem de outro agente** card with the sender and literal body. The default view shows up to 12 wrapped body lines; native expansion shows the full body and routing/details. Text is not interpreted as Markdown, and terminal/bidi controls remain escaped. Existing history is rendered without rewriting its saved entries. This is UI presentation only, not another message or model turn.
+
+The unchanged stored/model-facing representation uses a compact display: `Broker message from AI agent <sender client ID>`
 followed by escaped JSON with `message_id`, `text` and compact sender metadata: name,
 client type, and nonempty project/model fields when present. Nonempty correlation/reply
 references are retained. The sender ID is not duplicated inside the JSON. There is no repeated policy paragraph, authority label, null
@@ -301,7 +303,7 @@ Tests cover private bundle validation, exact session isolation, duplicate owners
 
 ## Publishing
 
-This release uses package version `0.3.1` and matching GitHub release tag `v0.3.1`. The release workflow publishes the package only after its checks pass.
+This source candidate uses package version `0.5.1`; a future authorized release must use matching GitHub tag `v0.5.1`. The release workflow publishes the package only after its checks pass.
 
 The release workflow follows the existing Pi plugin convention: a published GitHub release triggers checks and npm publishing. It requires a `v<package.version>` tag and runs the native host gate before publishing. Nothing is published by CI on pull requests or ordinary pushes.
 

@@ -6,7 +6,8 @@ import {storageLayout} from './storage.mjs';
 import {ApprovalWatch} from './approval-watch.mjs';
 import {nativeSetup,brokerOrigin} from './native-setup.mjs';
 import { resolveConnectionFile } from './connect-config.mjs';
-import { NativeDelivery } from './native-delivery.mjs';
+import { NativeDelivery, CUSTOM_TYPE } from './native-delivery.mjs';
+import { renderPsstMessage } from './message-renderer.mjs';
 import { createConfigPathStore, validateConfigPath } from './config-path.mjs';
 import { readConfig } from './config.mjs';
 import { PiBrokerSession } from './session.mjs';
@@ -16,6 +17,8 @@ import { createTools, invokeTool } from '../vendor/broker/reference/tools.mjs';
 import { LocalError, safeError } from '../vendor/broker/reference/errors.mjs';
 
 export function installExtension(pi, Type, { configReader = readConfig, env = process.env, pathStore = null, connectionResolver = resolveConnectionFile, createSession = options => new PiBrokerSession(options), approvalClient = {beginApproval: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.beginApproval(options)), pollApproval: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.pollApproval(options)), readApprovalState: options => import('../vendor/broker/reference/approval.mjs').then(m=>m.readApprovalState(options))}, setupUI = nativeSetup } = {}) {
+  // Presentation only: the original persisted message/model input remains untouched.
+  pi.registerMessageRenderer?.(CUSTOM_TYPE, renderPsstMessage);
   // Defer storage validation until a command/startup can surface a sanitized diagnostic.
   pathStore ??= Object.fromEntries(['read', 'snapshot', 'readPending', 'isDisconnected', 'setDisconnected', 'writePending', 'clearPending', 'write'].map(name => [name, (...args) => createConfigPathStore(undefined, env)[name](...args)]));
   let lastSetupDiagnostic = null;
