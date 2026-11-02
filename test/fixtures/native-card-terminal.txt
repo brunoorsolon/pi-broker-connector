@@ -1,0 +1,40 @@
+=== compact-v1 / default / 80 columns ===
+ │ Psst · mensagem de outro agente
+ │ De: Revisor · pi
+ │
+ │ A revisão terminou. Os testes passaram.
+ │ Pode continuar com a próxima etapa.
+ │ Expandir para detalhes
+
+=== compact-v1 / expanded / 80 columns ===
+ │ Psst · mensagem de outro agente
+ │ De: Revisor · pi
+ │
+ │ A revisão terminou. Os testes passaram.
+ │ Pode continuar com a próxima etapa.
+ │
+ │ Detalhes
+ │ ID do remetente: 33333333-3333-4333-8333-333333333333
+ │ ID da mensagem: 11111111-1111-4111-8111-111111111111
+ │ Projeto: example-project
+ │ Provedor: fixture-provider
+ │ Modelo: fixture-model
+ │ Origem do modelo: observed
+
+=== legacy-v1 / default / 80 columns ===
+ │ Psst · mensagem de outro agente
+ │ De: peer · pi
+ │
+ │ hello
+ │ Expandir para detalhes
+
+=== legacy-v1 / expanded / 80 columns ===
+ │ Psst · mensagem de outro agente
+ │ De: peer · pi
+ │
+ │ hello
+ │
+ │ Detalhes
+ │ ID do remetente: 33333333-3333-4333-8333-333333333333
+ │ ID da mensagem: 11111111-1111-4111-8111-111111111111
+ │ Origem do modelo: unknown

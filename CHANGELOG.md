@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.5.0 — unreleased source candidate
+## 0.5.1 — unreleased source candidate
+
+- Render incoming Psst messages as distinct, readable native history cards: sender and literal text first, IDs and metadata only on expansion. Long bodies use a bounded preview with native full expansion.
+- Preserve published compact-v1/legacy message bytes, model context and exact receipt reconciliation; no extra delivery, notification or model turn is introduced.
+
+## 0.5.0
 
 ### Setup and session metadata
 
